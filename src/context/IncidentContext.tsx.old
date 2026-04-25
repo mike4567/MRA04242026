@@ -1,0 +1,182 @@
+
+"use client";
+
+import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { collection, doc, query, orderBy, onSnapshot, runTransaction, writeBatch } from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, type User } from 'firebase/auth';
+import { app, db } from '@/lib/firebase';
+import type { Incident, PublicIncident, IncidentStatus } from '@/lib/types';
+import type { ResponderInfo } from '@/app/actions';
+
+
+interface IncidentContextType {
+  // State for the reporting form
+  setIncidentDataForConfirmation: (incidentId: string, responderInfo: ResponderInfo | null) => void;
+  incidentIdForConfirmation: string | null;
+  responderInfoForConfirmation: ResponderInfo | null;
+  resetConfirmationData: () => void;
+  
+  // State for admin panel & public page
+  incidents: Incident[];
+  publicIncidents: PublicIncident[];
+  loading: boolean;
+  updateIncident: (updatedIncident: Incident) => Promise<void>;
+}
+
+const IncidentContext = createContext<IncidentContextType | undefined>(undefined);
+
+// Helper to convert Firestore Timestamps to Dates
+const convertTimestamps = (data: any): any => {
+    // Handle Firestore Timestamp objects
+    if (data && typeof data.toMillis === 'function') {
+        return new Date(data.toMillis());
+    }
+    if (Array.isArray(data)) {
+        return data.map(convertTimestamps);
+    }
+    if (data !== null && typeof data === 'object' && !(data instanceof Date)) {
+        const newObj: { [key: string]: any } = {};
+        for (const key in data) {
+            newObj[key] = convertTimestamps(data[key]);
+        }
+        return newObj;
+    }
+    return data;
+};
+
+export function IncidentProvider({ children }: { children: ReactNode }) {
+  const [incidentIdForConfirmation, setIncidentIdForConfirmation] = useState<string | null>(null);
+  const [responderInfoForConfirmation, setResponderInfoForConfirmation] = useState<ResponderInfo | null>(null);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [publicIncidents, setPublicIncidents] = useState<PublicIncident[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const auth = getAuth(app);
+
+  // Set up real-time listeners
+  useEffect(() => {
+    setLoading(true);
+
+    const authUnsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+    });
+
+    // Listener for public incident data
+    const publicIncidentsCollectionRef = collection(db, "public_incidents");
+    const qPublic = query(publicIncidentsCollectionRef, orderBy('reportedAt', 'desc'));
+    const unsubscribePublicIncidents = onSnapshot(qPublic, (snapshot) => {
+        const publicList = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return { id: doc.id, ...convertTimestamps(data) } as PublicIncident;
+        }).filter(inc => inc.status !== 'Deleted'); // Filter out deleted incidents
+        setPublicIncidents(publicList);
+        setLoading(false);
+    }, (error) => {
+        console.error("Error fetching public incidents: ", error);
+        setLoading(false);
+    });
+    
+    return () => {
+        authUnsubscribe();
+        unsubscribePublicIncidents();
+    };
+  }, [auth]);
+
+  useEffect(() => {
+      // Listener for private, detailed incidents (for admin only)
+      let unsubscribeIncidents = () => {};
+      if (user) {
+          setLoading(true);
+          const incidentsCollectionRef = collection(db, "incidents");
+          const qIncidents = query(incidentsCollectionRef, orderBy('reportedAt', 'desc'));
+          
+          unsubscribeIncidents = onSnapshot(qIncidents, (snapshot) => {
+              const incidentsList = snapshot.docs
+                  .map(doc => {
+                      const data = doc.data();
+                      const convertedData = convertTimestamps(data);
+                      return { id: doc.id, ...convertedData } as Incident;
+                  })
+                  .filter(inc => inc.status !== 'Deleted'); // Filter out deleted incidents
+              setIncidents(incidentsList);
+              setLoading(false);
+          }, (error) => {
+              console.error("Error fetching private incidents: ", error);
+              setLoading(false);
+          });
+      } else {
+          // If user logs out, clear the sensitive incident data
+          setIncidents([]);
+      }
+
+      return () => unsubscribeIncidents();
+  }, [user]);
+
+  const updateIncident = async (updatedIncident: Incident) => {
+    const { id, ...dataToUpdate } = updatedIncident;
+    const incidentDocRef = doc(db, "incidents", id);
+    const publicIncidentDocRef = doc(db, "public_incidents", id);
+    
+    try {
+        if (dataToUpdate.status === 'Deleted') {
+            const batch = writeBatch(db);
+            batch.delete(incidentDocRef);
+            batch.delete(publicIncidentDocRef);
+            await batch.commit();
+        } else {
+            await runTransaction(db, async (transaction) => {
+                const dataForFirestore: {[key: string]: any} = { ...dataToUpdate };
+
+                // Update private incident
+                transaction.update(incidentDocRef, dataForFirestore);
+                
+                // Update public incident with relevant fields
+                const publicUpdatePayload: {status: IncidentStatus, responderNotes?: string, [key: string]: any} = {
+                  status: dataForFirestore.status,
+                };
+                if (dataForFirestore.responderNotes !== undefined) {
+                    publicUpdatePayload.responderNotes = dataForFirestore.responderNotes;
+                }
+
+                transaction.update(publicIncidentDocRef, publicUpdatePayload);
+            });
+        }
+    } catch (error) {
+        console.error("Error updating incident: ", error);
+        throw error;
+    }
+  }
+
+  const setIncidentDataForConfirmation = (incidentId: string, responderInfo: ResponderInfo | null) => {
+    setIncidentIdForConfirmation(incidentId);
+    setResponderInfoForConfirmation(responderInfo);
+  }
+
+  const resetConfirmationData = () => {
+    setIncidentIdForConfirmation(null);
+    setResponderInfoForConfirmation(null);
+  }
+
+  return (
+    <IncidentContext.Provider value={{ 
+        incidentIdForConfirmation,
+        responderInfoForConfirmation,
+        setIncidentDataForConfirmation,
+        resetConfirmationData,
+        incidents, 
+        publicIncidents, 
+        loading, 
+        updateIncident 
+    }}>
+      {children}
+    </IncidentContext.Provider>
+  );
+}
+
+export function useIncident() {
+  const context = useContext(IncidentContext);
+  if (context === undefined) {
+    throw new Error('useIncident must be used within an IncidentProvider');
+  }
+  return context;
+}

@@ -1,0 +1,215 @@
+'use server';
+
+/**
+ * @fileOverview Creates a new marine animal incident report.
+ * - createIncidentReport - Handles the incident creation process.
+ * - CreateIncidentInput - The input type for the function.
+ * - CreateIncidentOutput - The return type for the function.
+ */
+
+import {ai} from '@/ai/genkit';
+import {z} from 'zod';
+import { getDb, getStorage } from '@/lib/firebase-admin';
+import { sendNewIncidentSmsToResponder } from '@/app/admin/actions';
+import type { Incident, PublicIncident } from '@/lib/types';
+import { v4 as uuidv4 } from 'uuid';
+import { getResponderInfo, type ResponderInfo } from '@/app/actions';
+
+
+const CreateIncidentInputSchema = z.object({
+  mediaDataUris: z.array(z.string())
+    .optional()
+    .describe(
+      "A list of photos or videos of the incident, as data URIs that must include a MIME type and use Base64 encoding. Expected format: 'data:<mimetype>;base64,<encoded_data>'."
+    ),
+  location: z.string().describe("The location of the incident (address or lat/lon)."),
+  additionalLocationInfo: z.string().optional().describe("More specific details about the location."),
+  reporterName: z.string().optional().describe("The reporter's full name."),
+  reporterPhone: z.string().optional().describe("The reporter's phone number."),
+  canText: z.boolean().default(false).describe("Consent to receive SMS updates."),
+  animalType: z.string().optional().describe("The type of animal reported."),
+  animalLifeStatus: z.enum(['alive', 'dead']).describe("Whether the animal is alive or dead."),
+  conditions: z.array(z.string()).optional().describe("The observed conditions of the animal."),
+  detailedDescription: z.string().optional().describe("A detailed text description of the incident provided by the user.")
+});
+export type CreateIncidentInput = z.infer<typeof CreateIncidentInputSchema>;
+
+const CreateIncidentOutputSchema = z.object({
+  incidentId: z.string().describe("The unique ID of the newly created incident."),
+  summary: z.string().describe("A brief AI-generated summary of the incident shown in the media."),
+  responderInfo: z.custom<ResponderInfo>().nullable().describe("Information about the assigned responder."),
+  noResponderFound: z.boolean().describe("Whether a responder was found for the given location."),
+});
+export type CreateIncidentOutput = z.infer<typeof CreateIncidentOutputSchema>;
+
+export async function createIncidentReport(
+  input: CreateIncidentInput
+): Promise<CreateIncidentOutput> {
+  return createIncidentReportFlow(input);
+}
+
+// Define the prompt for the AI to summarize the incident
+const prompt = ai.definePrompt({
+  name: 'summarizeIncidentPrompt',
+  model: 'googleai/gemini-2.5-flash-lite',
+  input: {
+    schema: z.object({
+        animalType: CreateIncidentInputSchema.shape.animalType,
+        animalLifeStatus: CreateIncidentInputSchema.shape.animalLifeStatus,
+        conditions: CreateIncidentInputSchema.shape.conditions,
+        location: CreateIncidentInputSchema.shape.location,
+        detailedDescription: CreateIncidentInputSchema.shape.detailedDescription,
+        mediaDataUris: CreateIncidentInputSchema.shape.mediaDataUris
+    })
+  },
+  output: { format: 'text' },
+  prompt: `You are an expert marine biologist. Analyze the provided information and provide a concise, one-sentence summary of the situation. 
+
+Describe the animal and the nature of the event (e.g., entanglement, stranding).
+
+**Provided Information:**
+- Animal Type: {{#if animalType}}{{{animalType}}}{{else}}Not specified.{{/if}}
+- Life Status: {{{animalLifeStatus}}}
+- Observed Conditions: {{#if conditions}}{{#each conditions}} {{{this}}}{{/each}}{{else}}Not specified.{{/if}}
+- Reporter's Description: {{#if detailedDescription}}"{{{detailedDescription}}}"{{else}}Not provided.{{/if}}
+- Location: {{{location}}}
+{{#if mediaDataUris}}
+**Media:**
+{{#each mediaDataUris}}
+- {{media url=this}}
+{{/each}}
+{{else}}
+- No photos or videos were provided.
+{{/if}}
+
+Provide your two-sentence summary.`
+});
+
+
+const createIncidentReportFlow = ai.defineFlow(
+  {
+    name: 'createIncidentReportFlow',
+    inputSchema: CreateIncidentInputSchema,
+    outputSchema: CreateIncidentOutputSchema,
+  },
+  async (input) => {
+    // Step 1: Generate AI summary of the incident
+    const { output: summary } = await prompt(input);
+    if (!summary) {
+      throw new Error("Failed to generate incident summary.");
+    }
+    
+    const locationParts = input.location.split(',').map(s => s.trim());
+    const lat = parseFloat(locationParts[0]);
+    const lng = parseFloat(locationParts[1]);
+    const isValidCoordinates = !isNaN(lat) && !isNaN(lng);
+
+    // Step 1.5: Get Responder Info based on location, life status, and animal type
+    let responderInfo: ResponderInfo | null = null;
+    if (isValidCoordinates) {
+        responderInfo = await getResponderInfo(lat, lng, input.animalLifeStatus, input.animalType);
+    }
+    
+    const db = getDb();
+    const incidentId = db.collection("incidents").doc().id;
+    const reportedAt = new Date();
+
+    // Step 2: Create Incident and PublicIncident documents in a Firestore batch
+    const incidentRef = db.collection("incidents").doc(incidentId);
+    const publicIncidentRef = db.collection("public_incidents").doc(incidentId);
+    
+    const newIncident: Omit<Incident, 'id' | 'mediaUrls'> = {
+        location: input.location,
+        status: 'Reported',
+        reportedAt: reportedAt,
+        canText: input.canText,
+        summary: summary,
+        responderNotes: '',
+        responderOrg: responderInfo?.selectedOrg,
+        responderPhone: responderInfo?.selectedPhone,
+        animalLifeStatus: input.animalLifeStatus,
+    };
+    if (input.reporterName) newIncident.reporterName = input.reporterName;
+    if (input.reporterPhone) newIncident.reporterPhone = input.reporterPhone;
+    if (input.animalType) newIncident.animalType = input.animalType;
+    if (input.conditions) newIncident.conditions = input.conditions;
+    if (input.additionalLocationInfo) newIncident.additionalLocationInfo = input.additionalLocationInfo;
+    if (input.detailedDescription) newIncident.detailedDescription = input.detailedDescription;
+    
+    const newPublicIncident: Omit<PublicIncident, 'id' | 'mediaUrls'> = {
+        location: input.location,
+        status: 'Reported',
+        reportedAt: reportedAt,
+        responderNotes: '',
+        animalLifeStatus: input.animalLifeStatus,
+    };
+    if (input.animalType) newPublicIncident.animalType = input.animalType;
+    if (input.conditions) newPublicIncident.conditions = input.conditions;
+    if (input.additionalLocationInfo) newPublicIncident.additionalLocationInfo = input.additionalLocationInfo;
+    if (input.detailedDescription) newPublicIncident.detailedDescription = input.detailedDescription;
+    
+    try {
+      const batch = db.batch();
+      // Initialize docs with empty mediaUrls
+      batch.set(incidentRef, { ...newIncident, mediaUrls: [] });
+      batch.set(publicIncidentRef, { ...newPublicIncident, mediaUrls: [] });
+      await batch.commit();
+    } catch (error) {
+        console.error("Firestore transaction failed: ", error);
+        throw new Error("Failed to save incident to database.");
+    }
+
+    // Step 3: Upload media to Firebase Storage if it exists and update docs
+    let uploadedMediaUrls: string[] = [];
+    if (input.mediaDataUris && input.mediaDataUris.length > 0) {
+      
+      // --- THE FIX IS HERE ---
+      // Removed the hardcoded 'wcr-entanglement-app...' name.
+      // Now it uses the default bucket defined in firebase-admin.ts
+      const bucket = getStorage().bucket();
+
+      for (const dataUri of input.mediaDataUris) {
+        const match = dataUri.match(/^data:(.+);base64,(.+)$/);
+        if (!match) continue;
+
+        const [, mimeType, base64Data] = match;
+        const fileExtension = mimeType.split('/')[1] || 'bin';
+        const fileName = `incidents/${incidentId}/${uuidv4()}.${fileExtension}`;
+        const file = bucket.file(fileName);
+
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        await file.save(buffer, {
+            metadata: { contentType: mimeType },
+            predefinedAcl: 'publicRead',
+        });
+        
+        const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+        uploadedMediaUrls.push(publicUrl);
+      }
+
+      if (uploadedMediaUrls.length > 0) {
+          try {
+            await db.batch()
+              .update(incidentRef, { mediaUrls: uploadedMediaUrls })
+              .update(publicIncidentRef, { mediaUrls: uploadedMediaUrls })
+              .commit();
+          } catch(e) {
+             console.error("Error updating incident with media URLs: ", e);
+             throw new Error("Failed to update incident with media URLs.");
+          }
+      }
+    }
+
+    // Step 4: Send SMS notification to responder
+    await sendNewIncidentSmsToResponder(incidentId, input.location, summary);
+
+    // Step 5: Return the incident ID and summary
+    return {
+      incidentId: incidentId,
+      summary: summary,
+      responderInfo: responderInfo,
+      noResponderFound: !responderInfo?.selectedOrg,
+    };
+  }
+);

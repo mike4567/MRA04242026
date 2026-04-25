@@ -1,0 +1,25 @@
+import { Pool } from 'pg';
+
+// Create a connection pool to PostgreSQL
+// This handles multiple concurrent connections efficiently
+const pool = new Pool({
+  // In production (Cloud Run), we use the Unix socket.
+  // Locally, we use TCP (localhost).
+  // We'll configure the connection string via env variables.
+  connectionString: process.env.DATABASE_URL, 
+  
+  // SSL is required for some Cloud SQL configurations, 
+  // but usually handled automatically by the Cloud SQL Auth Proxy or Connector
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+});
+
+export const query = async (text: string, params?: any[]) => {
+  const start = Date.now();
+  const res = await pool.query(text, params);
+  const duration = Date.now() - start;
+  // Optional: Log slow queries
+  // console.log('executed query', { text, duration, rows: res.rowCount });
+  return res;
+};
+
+export default pool;

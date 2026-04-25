@@ -1,0 +1,10 @@
+
+import IncidentReportForm from "@/components/IncidentReportForm";
+
+export default function ReportPage() {
+  return (
+    <div className="flex flex-col items-center justify-center space-y-6">
+      <IncidentReportForm />
+    </div>
+  );
+}

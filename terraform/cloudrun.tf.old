@@ -1,0 +1,115 @@
+resource "google_cloud_run_v2_service" "default" {
+  name                = "entanglement-app"
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = true
+
+  template {
+    service_account = google_service_account.app_sa.email
+
+    containers {
+      image = var.container_image
+      
+      # Resources
+      resources {
+        limits = {
+          cpu    = "1000m"
+          memory = "1024Mi"
+        }
+      }
+
+      # Environment Variables (Non-sensitive)
+      env {
+        name  = "NEXT_PUBLIC_BASE_URL"
+        value = "https://entanglement-app-jfynik2bsa-uc.a.run.app"
+      }
+
+      # 1. Frontend Key (Browser Map)
+      env {
+        name = "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = "GOOGLE_MAPS_API_KEY"
+            version = "latest"
+          }
+        }
+      }
+
+      # 2. Backend Key (Geocoding API)
+      env {
+        name = "GOOGLE_MAPS_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = "GOOGLE_MAPS_SERVER_KEY"
+            version = "latest"
+          }
+        }
+      }
+
+      # 3. AI Key (Genkit/Gemini) --- NEW ---
+      env {
+        name = "GOOGLE_API_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = "GOOGLE_API_KEY"
+            version = "latest"
+          }
+        }
+      }
+
+      # Secrets (Sensitive) - Dynamic block for remaining keys
+      dynamic "env" {
+        for_each = toset([
+          "TWILIO_ACCOUNT_SID",
+          "TWILIO_AUTH_TOKEN",
+          "TWILIO_MESSAGING_SERVICE_SID",
+          "RESPONDER_PHONE_NUMBER"
+        ])
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.key
+              version = "latest"
+            }
+          }
+        }
+      }
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+# Make the service public
+resource "google_cloud_run_service_iam_member" "public_access" {
+  location = google_cloud_run_v2_service.default.location
+  service  = google_cloud_run_v2_service.default.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+# Grant access to Cloud Storage (for Photo/Video uploads)
+resource "google_project_iam_member" "storage_admin" {
+  project = var.project_id
+  role    = "roles/storage.objectAdmin"
+  member  = "serviceAccount:${google_service_account.app_sa.email}"
+}
+
+# --- NEW ADDITION: Manage the Bucket & CORS ---
+resource "google_storage_bucket" "media_bucket" {
+  name          = "mra-media"   # Your specific bucket name
+  location      = var.region    # Matches your Cloud Run region
+  storage_class = "STANDARD"
+
+  # Security settings
+  public_access_prevention    = "enforced"
+  uniform_bucket_level_access = true
+
+  # CORS Rules (Required for Browser Uploads)
+  cors {
+    origin          = ["*"]
+    method          = ["GET", "POST", "PUT", "HEAD", "DELETE"]
+    response_header = ["*"]
+    max_age_seconds = 3600
+  }
+}

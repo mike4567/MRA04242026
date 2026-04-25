@@ -1,0 +1,160 @@
+'use server';
+
+import {ai} from '@/ai/genkit';
+import {z} from 'zod';
+import { getDb, getStorage } from '@/lib/firebase-admin';
+import { sendNewIncidentSmsToResponder } from '@/app/admin/actions';
+import type { Incident, PublicIncident } from '@/lib/types';
+import { v4 as uuidv4 } from 'uuid';
+import { getResponderInfo, type ResponderInfo } from '@/app/actions';
+
+
+const CreateIncidentInputSchema = z.object({
+  mediaDataUris: z.array(z.string()).optional(),
+  location: z.string(),
+  additionalLocationInfo: z.string().optional(),
+  reporterName: z.string().optional(),
+  reporterPhone: z.string().optional(),
+  canText: z.boolean().default(false),
+  animalType: z.string().optional(),
+  animalLifeStatus: z.enum(['alive', 'dead']),
+  conditions: z.array(z.string()).optional(),
+  detailedDescription: z.string().optional()
+});
+export type CreateIncidentInput = z.infer<typeof CreateIncidentInputSchema>;
+
+const CreateIncidentOutputSchema = z.object({
+  incidentId: z.string(),
+  summary: z.string(),
+  responderInfo: z.custom<ResponderInfo>().nullable(),
+  noResponderFound: z.boolean(),
+});
+export type CreateIncidentOutput = z.infer<typeof CreateIncidentOutputSchema>;
+
+export async function createIncidentReport(
+  input: CreateIncidentInput
+): Promise<CreateIncidentOutput> {
+  return createIncidentReportFlow(input);
+}
+
+const prompt = ai.definePrompt({
+  name: 'summarizeIncidentPrompt',
+  model: 'googleai/gemini-2.5-flash-lite',
+  input: {
+    schema: z.object({
+        animalType: CreateIncidentInputSchema.shape.animalType,
+        animalLifeStatus: CreateIncidentInputSchema.shape.animalLifeStatus,
+        conditions: CreateIncidentInputSchema.shape.conditions,
+        location: CreateIncidentInputSchema.shape.location,
+        detailedDescription: CreateIncidentInputSchema.shape.detailedDescription,
+        mediaDataUris: CreateIncidentInputSchema.shape.mediaDataUris
+    })
+  },
+  output: { format: 'text' },
+  prompt: `You are an expert marine biologist. Analyze the provided information and provide a concise, one-sentence summary of the situation. 
+  Describe the animal and the nature of the event.
+  Information: {{#if animalType}}{{{animalType}}}{{/if}} {{{animalLifeStatus}}} {{#if conditions}}{{#each conditions}} {{{this}}} {{/each}}{{/if}} {{#if detailedDescription}}{{{detailedDescription}}}{{/if}}
+  Location: {{{location}}}
+  Provide your two-sentence summary.`
+});
+
+const createIncidentReportFlow = ai.defineFlow(
+  {
+    name: 'createIncidentReportFlow',
+    inputSchema: CreateIncidentInputSchema,
+    outputSchema: CreateIncidentOutputSchema,
+  },
+  async (input) => {
+    const { output: summary } = await prompt(input);
+    
+    const locationParts = input.location.split(',').map(s => s.trim());
+    const lat = parseFloat(locationParts[0]);
+    const lng = parseFloat(locationParts[1]);
+    
+    let responderInfo: ResponderInfo | null = null;
+    if (!isNaN(lat) && !isNaN(lng)) {
+        responderInfo = await getResponderInfo(lat, lng, input.animalLifeStatus, input.animalType);
+    }
+    
+    const db = getDb();
+    const incidentId = db.collection("incidents").doc().id;
+    const reportedAt = new Date();
+
+    const incidentRef = db.collection("incidents").doc(incidentId);
+    const publicIncidentRef = db.collection("public_incidents").doc(incidentId);
+    
+    const baseIncident = {
+        location: input.location,
+        status: 'Reported',
+        reportedAt: reportedAt,
+        animalLifeStatus: input.animalLifeStatus,
+        summary: summary || "",
+    };
+    
+    // Build the Incident Object
+    const newIncident: any = { ...baseIncident, canText: input.canText, responderNotes: '', responderOrg: responderInfo?.selectedOrg, responderPhone: responderInfo?.selectedPhone };
+    if (input.reporterName) newIncident.reporterName = input.reporterName;
+    if (input.reporterPhone) newIncident.reporterPhone = input.reporterPhone;
+    if (input.animalType) newIncident.animalType = input.animalType;
+    if (input.conditions) newIncident.conditions = input.conditions;
+    if (input.additionalLocationInfo) newIncident.additionalLocationInfo = input.additionalLocationInfo;
+    if (input.detailedDescription) newIncident.detailedDescription = input.detailedDescription;
+    
+    // Build the Public Object (Sanitized)
+    const newPublicIncident: any = { ...baseIncident, responderNotes: '' };
+    if (input.animalType) newPublicIncident.animalType = input.animalType;
+    if (input.conditions) newPublicIncident.conditions = input.conditions;
+    if (input.additionalLocationInfo) newPublicIncident.additionalLocationInfo = input.additionalLocationInfo;
+    if (input.detailedDescription) newPublicIncident.detailedDescription = input.detailedDescription;
+
+    try {
+      const batch = db.batch();
+      batch.set(incidentRef, { ...newIncident, mediaUrls: [] });
+      batch.set(publicIncidentRef, { ...newPublicIncident, mediaUrls: [] });
+      await batch.commit();
+    } catch (error) {
+        throw new Error("Failed to save incident to database.");
+    }
+
+    // Step 3: Upload Media
+    let uploadedMediaUrls: string[] = [];
+    if (input.mediaDataUris && input.mediaDataUris.length > 0) {
+      const bucket = getStorage().bucket(); // CORRECT: Uses default bucket
+
+      for (const dataUri of input.mediaDataUris) {
+        const match = dataUri.match(/^data:(.+);base64,(.+)$/);
+        if (!match) continue;
+
+        const [, mimeType, base64Data] = match;
+        const fileExtension = mimeType.split('/')[1] || 'bin';
+        const fileName = `incidents/${incidentId}/${uuidv4()}.${fileExtension}`;
+        const file = bucket.file(fileName);
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        // --- FIXED: Removed 'predefinedAcl: publicRead' ---
+        await file.save(buffer, {
+            metadata: { contentType: mimeType },
+        });
+        
+        const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+        uploadedMediaUrls.push(publicUrl);
+      }
+
+      if (uploadedMediaUrls.length > 0) {
+         await db.batch()
+            .update(incidentRef, { mediaUrls: uploadedMediaUrls })
+            .update(publicIncidentRef, { mediaUrls: uploadedMediaUrls })
+            .commit();
+      }
+    }
+
+    await sendNewIncidentSmsToResponder(incidentId, input.location, summary || "");
+
+    return {
+      incidentId: incidentId,
+      summary: summary || "",
+      responderInfo: responderInfo,
+      noResponderFound: !responderInfo?.selectedOrg,
+    };
+  }
+);

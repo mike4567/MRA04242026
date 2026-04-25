@@ -1,0 +1,32 @@
+// Import the functions you need from the SDKs you need
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  // TODO: Replace this with the API Key from your Google Cloud Console -> Credentials
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "YOUR_NEW_API_KEY_HERE",
+  
+  // FIXED: Updated to match your current Project ID
+  authDomain: "fedramp-app-prod.firebaseapp.com",
+  projectId: "fedramp-app-prod",
+  
+  // FIXED: Updated to use your new media bucket
+  storageBucket: "mra-media",
+  
+  // These IDs can usually remain if they are associated with the project, 
+  // but verify them in Project Settings > General if you have issues.
+  messagingSenderId: "243685499638",
+  appId: "1:243685499638:web:ae7e70cdb55086651e02d7"
+};
+
+// Initialize Firebase
+// This check prevents "Firebase App named '[DEFAULT]' already exists" errors
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+export { app, db, storage };
