@@ -1,0 +1,97 @@
+# ==============================================================================
+# CLOUD BUILD - TERRAFORM INFRASTRUCTURE DEPLOYMENT
+# ==============================================================================
+# Author: NMFS West Coast Region
+# Date: 2026-04-28
+# Purpose: Execute Terraform via Cloud Build to provision GCP infrastructure
+#          using the project's CI/CD service account instead of user credentials.
+#
+# USAGE:
+#   gcloud builds submit --config=cloudbuild-terraform.yaml .
+#
+# PREREQUISITES:
+#   1. Cloud Build API must be enabled
+#   2. Cloud Build service account needs these roles:
+#      - roles/editor (or more granular roles below)
+#      - roles/iam.serviceAccountAdmin
+#      - roles/iam.securityAdmin
+#      - roles/secretmanager.admin
+#      - roles/cloudsql.admin
+#      - roles/storage.admin
+#      - roles/run.admin
+# ==============================================================================
+
+steps:
+  # --------------------------------------------------------------------------
+  # Step 1: Initialize Terraform
+  # --------------------------------------------------------------------------
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-init'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        cd terraform
+        terraform init -input=false
+    
+  # --------------------------------------------------------------------------
+  # Step 2: Validate Terraform Configuration
+  # --------------------------------------------------------------------------
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-validate'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        cd terraform
+        terraform validate
+    waitFor: ['terraform-init']
+
+  # --------------------------------------------------------------------------
+  # Step 3: Plan Terraform Changes
+  # --------------------------------------------------------------------------
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-plan'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        cd terraform
+        terraform plan -input=false -out=tfplan
+    waitFor: ['terraform-validate']
+
+  # --------------------------------------------------------------------------
+  # Step 4: Apply Terraform Changes
+  # --------------------------------------------------------------------------
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-apply'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        cd terraform
+        terraform apply -input=false -auto-approve tfplan
+    waitFor: ['terraform-plan']
+
+  # --------------------------------------------------------------------------
+  # Step 5: Output Results
+  # --------------------------------------------------------------------------
+  - name: 'hashicorp/terraform:1.5'
+    id: 'terraform-output'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        cd terraform
+        echo "=========================================="
+        echo "TERRAFORM DEPLOYMENT COMPLETE"
+        echo "=========================================="
+        terraform output
+    waitFor: ['terraform-apply']
+
+# Build timeout (Cloud SQL creation can take 10-15 minutes)
+timeout: '1800s'
+
+# Build options
+options:
+  logging: CLOUD_LOGGING_ONLY
