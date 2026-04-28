@@ -3,7 +3,7 @@
 import { ai } from '@/ai/genkit';
 import { z } from 'zod';
 import { query } from '@/lib/db'; 
-import { getStorage } from '@/lib/firebase-admin'; 
+import { getBucket } from '@/lib/gcs-storage'; 
 import { sendNewIncidentNotification } from '@/services/sms';
 import { generateIncidentId } from '@/lib/utils';
 import { getResponderInfo, type SpecificResponderInfo } from '@/app/actions';
@@ -131,7 +131,7 @@ const createIncidentReportFlow = ai.defineFlow(
 
     if (input.mediaDataUris && input.mediaDataUris.length > 0) {
       const { fileTypeFromBuffer } = await import('file-type');
-      const bucket = getStorage().bucket();
+      const bucket = getBucket();
       
       const uploadPromises = input.mediaDataUris.map(async (dataUri, index) => {
         const match = dataUri.match(/^data:(.+);base64,(.+)$/);
@@ -178,10 +178,7 @@ const createIncidentReportFlow = ai.defineFlow(
           const file = bucket.file(fileName);
 
           await file.save(processedBuffer, {
-            metadata: {
-              contentType: finalMimeType,
-              contentDisposition: 'inline', // Prevent browser from executing the file
-            },
+            contentType: finalMimeType,
           });
           
           return `https://storage.googleapis.com/${bucket.name}/${fileName}`;
