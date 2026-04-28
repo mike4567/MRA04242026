@@ -1,0 +1,48 @@
+# ==============================================================================
+# TERRAFORM VARIABLES EXAMPLE - Marine Response Application
+# ==============================================================================
+# Author: NMFS West Coast Region
+# Date: 2026-04-27
+# Purpose: Example terraform.tfvars file - Copy to terraform.tfvars and fill in values
+# 
+# SECURITY WARNING: Never commit terraform.tfvars with real values to version control!
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# PROJECT CONFIGURATION
+# ------------------------------------------------------------------------------
+project_id      = "ggn-nmfs-wcrmmrapp-dev-1"
+region          = "us-west1"
+
+# ------------------------------------------------------------------------------
+# RESOURCE NAMING
+# ------------------------------------------------------------------------------
+gcs_bucket_name        = "nmfs-mra-media"
+db_instance_name       = ""  # Leave empty for auto-generated name
+cloud_run_service_name = "mra-app"
+
+# Container image - Update after each build
+container_image = "us-west1-docker.pkg.dev/ggn-nmfs-wcrmmrapp-dev-1/mra-repo/mra-app:latest"
+
+# ------------------------------------------------------------------------------
+# API KEYS - Google Services
+# ------------------------------------------------------------------------------
+google_maps_api_key = "YOUR_GOOGLE_MAPS_API_KEY"
+google_ai_api_key   = "YOUR_GOOGLE_AI_API_KEY"
+
+# ------------------------------------------------------------------------------
+# API KEYS - Twilio (SMS Notifications)
+# ------------------------------------------------------------------------------
+twilio_account_sid           = "YOUR_TWILIO_ACCOUNT_SID"
+twilio_auth_token            = "YOUR_TWILIO_AUTH_TOKEN"
+twilio_messaging_service_sid = "YOUR_TWILIO_MESSAGING_SERVICE_SID"
+
+# ------------------------------------------------------------------------------
+# API KEYS - Email (SendGrid)
+# ------------------------------------------------------------------------------
+sendgrid_api_key = "YOUR_SENDGRID_API_KEY"
+
+# ------------------------------------------------------------------------------
+# APPLICATION CONFIGURATION
+# ------------------------------------------------------------------------------
+next_public_base_url = "https://mra-app-xxxxx.run.app"

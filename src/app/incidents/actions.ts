@@ -1,43 +1,51 @@
-// /src/app/incidents/actions.ts
 'use server';
 
-import { getDb } from '@/lib/firebase-admin';
+/**
+ * @file actions.ts
+ * @author NMFS West Coast Region - Marine Response Application
+ * @date 2026-04-27
+ * @purpose Server actions for public incident data retrieval using PostgreSQL.
+ *          Replaces Firestore implementation.
+ */
+
+import { query } from '@/lib/db';
 import type { PublicIncident } from '@/lib/types';
 
-// Helper to convert Firestore Timestamps to Dates
-const convertTimestamps = (data: any): any => {
-    if (data && typeof data.toMillis === 'function') {
-        return new Date(data.toMillis());
-    }
-    if (Array.isArray(data)) {
-        return data.map(convertTimestamps);
-    }
-    if (data !== null && typeof data === 'object' && !(data instanceof Date)) {
-        const newObj: { [key: string]: any } = {};
-        for (const key in data) {
-            newObj[key] = convertTimestamps(data[key]);
-        }
-        return newObj;
-    }
-    return data;
-};
-
+/**
+ * Fetches a single public incident by ID from the PostgreSQL database.
+ * Uses the public_incidents_view to ensure only sanitized data is returned.
+ * 
+ * @param id - The incident ID to fetch
+ * @returns The public incident data or null if not found
+ */
 export async function getPublicIncidentById(id: string): Promise<PublicIncident | null> {
-  try {
-    const db = getDb();
-    const incidentDoc = await db.collection('public_incidents').doc(id).get();
-
-    if (!incidentDoc.exists) {
-      return null;
-    }
+    const sql = `SELECT * FROM public_incidents_view WHERE id = $1`;
     
-    const data = incidentDoc.data();
-    // Ensure the reportedAt field is a Date object for consistent usage
-    const convertedData = convertTimestamps(data);
-
-    return { id: incidentDoc.id, ...convertedData } as PublicIncident;
-  } catch (error) {
-    console.error(`Failed to fetch public incident ${id}:`, error);
-    return null;
-  }
+    try {
+        const result = await query(sql, [id]);
+        
+        if (result.rows.length === 0) {
+            return null;
+        }
+        
+        const row = result.rows[0];
+        
+        // Map snake_case SQL columns to camelCase TypeScript properties
+        return {
+            id: row.id,
+            location: row.location,
+            additionalLocationInfo: row.additional_location_info,
+            mediaUrls: row.media_urls || [],
+            status: row.status,
+            reportedAt: new Date(row.reported_at),
+            animalType: row.animal_type,
+            animalLifeStatus: row.animal_life_status,
+            conditions: row.conditions || [],
+            detailedDescription: row.detailed_description,
+            responderNotes: row.responder_notes
+        };
+    } catch (error) {
+        console.error(`Failed to fetch public incident ${id}:`, error);
+        return null;
+    }
 }
