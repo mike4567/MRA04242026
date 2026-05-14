@@ -4,10 +4,6 @@ terraform {
       source  = "hashicorp/google"
       version = ">= 5.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = ">= 3.0"
-    }
   }
 }
 
@@ -19,93 +15,58 @@ provider "google" {
 # ==============================================================================
 # 1. ENABLE APIS
 # ==============================================================================
+# These APIs are required for Cloud Run, Cloud SQL, Secret Manager, and AI.
+# Firestore API has been removed as part of the Firebase-to-GCP migration.
 resource "google_project_service" "apis" {
   for_each = toset([
     "run.googleapis.com",
     "sqladmin.googleapis.com",
-    "firestore.googleapis.com",
     "secretmanager.googleapis.com",
     "artifactregistry.googleapis.com",
     "cloudbuild.googleapis.com",
     "iam.googleapis.com",
-    "aiplatform.googleapis.com"
+    "aiplatform.googleapis.com",
+    "storage.googleapis.com"
   ])
   service            = each.key
   disable_on_destroy = false
 }
 
 # ==============================================================================
-# 2. SECURITY IDENTITY (The "Janitor")
+# 2. SECURITY IDENTITY (Application Runtime Service Account)
 # ==============================================================================
-resource "google_service_account" "app_sa" {
-  account_id   = "mra-app-runner"
-  display_name = "Marine Response App Runtime Identity"
-  description  = "Identity used strictly by Cloud Run to access backing services."
-  depends_on   = [google_project_service.apis]
-}
-
-# ==============================================================================
-# 3. STORAGE (SAFE MODE: PRESERVING "mra-media")
-# ==============================================================================
-resource "google_storage_bucket" "media_bucket" {
-  name          = "mra-media" # CRITICAL: Matches your existing bucket
-  location      = var.region
-  force_destroy = false 
-
-  uniform_bucket_level_access = true
-  
-  cors {
-    origin          = ["*"]
-    method          = ["GET", "HEAD", "PUT", "POST", "DELETE"]
-    response_header = ["*"]
-    max_age_seconds = 3600
-  }
+# This service account is used by Cloud Run to access backing services.
+# It should already exist from previous provisioning. Using data block to reference.
+data "google_service_account" "app_sa" {
+  account_id = "mra-app-runner"
 }
 
 # ==============================================================================
-# 4. DATABASE (SAFE MODE: PRESERVING EXISTING NAMES)
+# 3. STORAGE - EXISTING BUCKET (nmfs-mra-media)
 # ==============================================================================
-resource "random_id" "db_suffix" {
-  byte_length = 4
+# The GCS bucket was already created in a previous Terraform run.
+# Using data block to reference the existing bucket.
+data "google_storage_bucket" "media_bucket" {
+  name = "nmfs-mra-media"
 }
 
-resource "google_sql_database_instance" "postgres" {
-  name             = "mra-db-instance-a9e0d26f" # Hardcoded to match your output
-  database_version = "POSTGRES_15"
-  region           = var.region
-  deletion_protection = false 
-
-  settings {
-    tier = "db-f1-micro"
-    
-    ip_configuration {
-      ipv4_enabled = true 
-    }
-    
-    database_flags {
-      name  = "cloudsql.iam_authentication"
-      value = "on"
-    }
-  }
-  depends_on = [google_project_service.apis]
+# ==============================================================================
+# 4. DATABASE - EXISTING CLOUD SQL INSTANCE (nmfs-mra-db-instance)
+# ==============================================================================
+# The Cloud SQL instance, database, and user were already created.
+# Using data blocks to reference the existing resources.
+data "google_sql_database_instance" "postgres" {
+  name = "nmfs-mra-db-instance"
 }
 
-resource "google_sql_database" "database" {
-  name     = "entanglement_db"
-  instance = google_sql_database_instance.postgres.name
-}
+# Note: google_sql_database and google_sql_user do not have data sources.
+# We reference them by known names in the DATABASE_URL secret.
 
-resource "random_password" "db_password" {
-  length  = 16
-  special = false
-}
-
-resource "google_sql_user" "db_user" {
-  name     = "app_user"
-  instance = google_sql_database_instance.postgres.name
-  password = random_password.db_password.result
-}
-
+# ==============================================================================
+# 5. SECRETS - DATABASE_URL
+# ==============================================================================
+# The DATABASE_URL secret for Cloud Run to connect to Cloud SQL.
+# This may already exist; if so, we'll manage the version.
 resource "google_secret_manager_secret" "db_url" {
   secret_id = "DATABASE_URL"
   replication {
@@ -115,121 +76,159 @@ resource "google_secret_manager_secret" "db_url" {
 }
 
 resource "google_secret_manager_secret_version" "db_url_val" {
-  secret = google_secret_manager_secret.db_url.id
-  secret_data = "postgres://app_user:${random_password.db_password.result}@localhost/entanglement_db?host=/cloudsql/${google_sql_database_instance.postgres.connection_name}"
+  secret      = google_secret_manager_secret.db_url.id
+  secret_data = "postgres://app_user:${var.db_password}@localhost/nmfs-entanglement_db?host=/cloudsql/${data.google_sql_database_instance.postgres.connection_name}"
 }
 
 # ==============================================================================
-# 5. IAM BINDINGS (Least Privilege)
+# 6. SECRETS - AUTH_SECRET (NextAuth.js)
 # ==============================================================================
+# Required by NextAuth.js for session encryption.
+resource "google_secret_manager_secret" "auth_secret" {
+  secret_id = "AUTH_SECRET"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "auth_secret_val" {
+  secret      = google_secret_manager_secret.auth_secret.id
+  secret_data = var.auth_secret
+}
+
+# ==============================================================================
+# 7. IAM BINDINGS (Least Privilege for Existing Service Account)
+# ==============================================================================
+# These bindings grant the app_sa service account access to required services.
 
 resource "google_project_iam_member" "sql_client" {
   project = var.project_id
   role    = "roles/cloudsql.client"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
+  member  = "serviceAccount:${data.google_service_account.app_sa.email}"
 }
 
 resource "google_storage_bucket_iam_member" "storage_admin" {
-  bucket = google_storage_bucket.media_bucket.name
+  bucket = data.google_storage_bucket.media_bucket.name
   role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.app_sa.email}"
+  member = "serviceAccount:${data.google_service_account.app_sa.email}"
 }
 
 resource "google_project_iam_member" "vertex_user" {
   project = var.project_id
   role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
+  member  = "serviceAccount:${data.google_service_account.app_sa.email}"
 }
 
 resource "google_project_iam_member" "secret_accessor" {
   project = var.project_id
   role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
+  member  = "serviceAccount:${data.google_service_account.app_sa.email}"
 }
 
 # ==============================================================================
-# 6. CLOUD RUN (SAFE MODE: PRESERVING "entanglement-app")
+# 8. CLOUD RUN SERVICE (nmfs-mra-app)
 # ==============================================================================
+# The Next.js application deployed to Cloud Run with NMFS naming convention.
+# All Firebase environment variables have been removed.
 resource "google_cloud_run_service" "app" {
-  name     = "entanglement-app" # CRITICAL: Matches your existing service
+  name     = "nmfs-mra-app"
   location = var.region
 
   template {
     spec {
-      service_account_name = google_service_account.app_sa.email
+      service_account_name = data.google_service_account.app_sa.email
       timeout_seconds      = 300
       
       containers {
         image = var.container_image
         
         # --- Environment Variables ---
+        # GCP Project and Storage
         env {
-            name = "GCS_BUCKET_NAME"
-            value = google_storage_bucket.media_bucket.name
+          name  = "GCS_BUCKET_NAME"
+          value = data.google_storage_bucket.media_bucket.name
         }
         env {
-            name = "GOOGLE_CLOUD_PROJECT"
-            value = var.project_id
+          name  = "GOOGLE_CLOUD_PROJECT"
+          value = var.project_id
         }
         
         # Database URL from Secret Manager
         env {
-            name = "DATABASE_URL"
-            value_from {
-                secret_key_ref {
-                    name = google_secret_manager_secret.db_url.secret_id
-                    key  = "latest"
-                }
+          name = "DATABASE_URL"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.db_url.secret_id
+              key  = "latest"
             }
+          }
         }
         
-        # Secrets injected from variables
+        # NextAuth.js Secret from Secret Manager
         env {
-            name = "GOOGLE_MAPS_API_KEY"
-            value = var.google_maps_api_key
+          name = "AUTH_SECRET"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.auth_secret.secret_id
+              key  = "latest"
+            }
+          }
         }
+        
+        # NextAuth.js Configuration
         env {
-            name = "GOOGLE_API_KEY"
-            value = var.google_ai_api_key
+          name  = "NEXTAUTH_URL"
+          value = var.next_public_base_url
         }
+        
+        # Google Maps API Key
         env {
-            name = "TWILIO_ACCOUNT_SID"
-            value = var.twilio_account_sid
-        }
-        env {
-            name = "TWILIO_AUTH_TOKEN"
-            value = var.twilio_auth_token
-        }
-        env {
-            name = "TWILIO_MESSAGING_SERVICE_SID"
-            value = var.twilio_messaging_service_sid
-        }
-        env {
-             name = "NEXT_PUBLIC_BASE_URL"
-             value = var.next_public_base_url
+          name  = "GOOGLE_MAPS_API_KEY"
+          value = var.google_maps_api_key
         }
         env {
-             name = "NEXT_PUBLIC_FIREBASE_API_KEY"
-             value = var.firebase_api_key
+          name  = "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"
+          value = var.google_maps_api_key
+        }
+        
+        # Google AI (Gemini) API Key
+        env {
+          name  = "GOOGLE_API_KEY"
+          value = var.google_ai_api_key
+        }
+        
+        # Twilio Configuration
+        env {
+          name  = "TWILIO_ACCOUNT_SID"
+          value = var.twilio_account_sid
         }
         env {
-            name = "FIREBASE_ADMIN_PRIVATE_KEY"
-            value = var.firebase_admin_private_key
+          name  = "TWILIO_AUTH_TOKEN"
+          value = var.twilio_auth_token
         }
-		env {
-            name = "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"
-            value = var.google_maps_api_key
+        env {
+          name  = "TWILIO_MESSAGING_SERVICE_SID"
+          value = var.twilio_messaging_service_sid
         }
-		env {
-            name = "SENDGRID_API_KEY"
-            value = var.sendgrid_api_key
+        
+        # SendGrid Configuration
+        env {
+          name  = "SENDGRID_API_KEY"
+          value = var.sendgrid_api_key
+        }
+        
+        # Application Base URL
+        env {
+          name  = "NEXT_PUBLIC_BASE_URL"
+          value = var.next_public_base_url
         }
       }
     }
     
     metadata {
       annotations = {
-        "run.googleapis.com/cloudsql-instances" = google_sql_database_instance.postgres.connection_name
+        "run.googleapis.com/cloudsql-instances" = data.google_sql_database_instance.postgres.connection_name
         "run.googleapis.com/client-name"        = "terraform"
       }
     }
@@ -240,10 +239,11 @@ resource "google_cloud_run_service" "app" {
     latest_revision = true
   }
   
-  depends_on = [google_project_service.apis, google_sql_database_instance.postgres]
+  depends_on = [google_project_service.apis]
 }
+
 # ==============================================================================
-# 7. PUBLIC ACCESS (Unlock the Front Door)
+# 9. PUBLIC ACCESS (Allow unauthenticated access to Cloud Run)
 # ==============================================================================
 resource "google_cloud_run_service_iam_member" "public_access" {
   service  = google_cloud_run_service.app.name
@@ -252,11 +252,30 @@ resource "google_cloud_run_service_iam_member" "public_access" {
   role     = "roles/run.invoker"
   member   = "allUsers"
 }
+
 # ==============================================================================
-# 8. PUBLIC STORAGE ACCESS (Allow Images to Load)
+# 10. PUBLIC STORAGE ACCESS (Allow public read access to media bucket)
 # ==============================================================================
 resource "google_storage_bucket_iam_member" "public_read_access" {
-  bucket = google_storage_bucket.media_bucket.name
+  bucket = data.google_storage_bucket.media_bucket.name
   role   = "roles/storage.objectViewer"
   member = "allUsers"
+}
+
+# ==============================================================================
+# OUTPUTS
+# ==============================================================================
+output "cloud_run_url" {
+  description = "The URL of the deployed Cloud Run service"
+  value       = google_cloud_run_service.app.status[0].url
+}
+
+output "cloud_sql_connection_name" {
+  description = "The connection name for the Cloud SQL instance"
+  value       = data.google_sql_database_instance.postgres.connection_name
+}
+
+output "gcs_bucket_name" {
+  description = "The name of the GCS media bucket"
+  value       = data.google_storage_bucket.media_bucket.name
 }
