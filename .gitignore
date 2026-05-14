@@ -33,4 +33,4 @@ yarn-error.log*
 
 *.tfvars
 
-/gitignore
+/gitignore*
