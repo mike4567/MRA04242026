@@ -66,11 +66,15 @@ data "google_sql_database_instance" "postgres" {
 # 5. SECRETS - DATABASE_URL
 # ==============================================================================
 # The DATABASE_URL secret for Cloud Run to connect to Cloud SQL.
-# This may already exist; if so, we'll manage the version.
+# Using user_managed replication with us-west1 to comply with org policy.
 resource "google_secret_manager_secret" "db_url" {
   secret_id = "DATABASE_URL"
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
   depends_on = [google_project_service.apis]
 }
@@ -84,10 +88,15 @@ resource "google_secret_manager_secret_version" "db_url_val" {
 # 6. SECRETS - AUTH_SECRET (NextAuth.js)
 # ==============================================================================
 # Required by NextAuth.js for session encryption.
+# Using user_managed replication with us-west1 to comply with org policy.
 resource "google_secret_manager_secret" "auth_secret" {
   secret_id = "AUTH_SECRET"
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
   depends_on = [google_project_service.apis]
 }
@@ -98,32 +107,19 @@ resource "google_secret_manager_secret_version" "auth_secret_val" {
 }
 
 # ==============================================================================
-# 7. IAM BINDINGS (Least Privilege for Existing Service Account)
+# 7. IAM BINDINGS
 # ==============================================================================
-# These bindings grant the app_sa service account access to required services.
-
-resource "google_project_iam_member" "sql_client" {
-  project = var.project_id
-  role    = "roles/cloudsql.client"
-  member  = "serviceAccount:${data.google_service_account.app_sa.email}"
-}
-
+# NOTE: Project-level IAM bindings removed due to org policy restrictions.
+# The following roles must be granted by your Google Admin to mra-app-runner SA:
+#   - roles/cloudsql.client
+#   - roles/aiplatform.user
+#   - roles/secretmanager.secretAccessor
+#
+# Bucket-level IAM for storage access (this should work with SA Admin role)
 resource "google_storage_bucket_iam_member" "storage_admin" {
   bucket = data.google_storage_bucket.media_bucket.name
   role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${data.google_service_account.app_sa.email}"
-}
-
-resource "google_project_iam_member" "vertex_user" {
-  project = var.project_id
-  role    = "roles/aiplatform.user"
-  member  = "serviceAccount:${data.google_service_account.app_sa.email}"
-}
-
-resource "google_project_iam_member" "secret_accessor" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${data.google_service_account.app_sa.email}"
 }
 
 # ==============================================================================
@@ -239,7 +235,11 @@ resource "google_cloud_run_service" "app" {
     latest_revision = true
   }
   
-  depends_on = [google_project_service.apis]
+  depends_on = [
+    google_project_service.apis,
+    google_secret_manager_secret_version.db_url_val,
+    google_secret_manager_secret_version.auth_secret_val
+  ]
 }
 
 # ==============================================================================
@@ -254,13 +254,10 @@ resource "google_cloud_run_service_iam_member" "public_access" {
 }
 
 # ==============================================================================
-# 10. PUBLIC STORAGE ACCESS (Allow public read access to media bucket)
+# NOTE: Public storage access removed due to org policy constraints
 # ==============================================================================
-resource "google_storage_bucket_iam_member" "public_read_access" {
-  bucket = data.google_storage_bucket.media_bucket.name
-  role   = "roles/storage.objectViewer"
-  member = "allUsers"
-}
+# The organization policy enforces "public access prevention" on storage buckets.
+# Media files will need to be served through signed URLs or the application.
 
 # ==============================================================================
 # OUTPUTS
