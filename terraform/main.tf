@@ -131,6 +131,12 @@ resource "google_cloud_run_service" "app" {
   name     = "nmfs-mra-app"
   location = var.region
 
+  metadata {
+    annotations = {
+      "run.googleapis.com/ingress" = "internal-and-cloud-load-balancing"
+    }
+  }
+
   template {
     spec {
       service_account_name = data.google_service_account.app_sa.email
@@ -243,15 +249,16 @@ resource "google_cloud_run_service" "app" {
 }
 
 # ==============================================================================
-# 9. PUBLIC ACCESS (Allow unauthenticated access to Cloud Run)
+# 9. PUBLIC ACCESS - BLOCKED BY ORG POLICY
 # ==============================================================================
-resource "google_cloud_run_service_iam_member" "public_access" {
-  service  = google_cloud_run_service.app.name
-  location = google_cloud_run_service.app.location
-  project  = var.project_id
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
+# NOTE: allUsers IAM binding is blocked by NMFS organization policy.
+# Access must be granted through:
+#   1. IAP (Identity-Aware Proxy) for authenticated users, OR
+#   2. Load Balancer with IAP, OR
+#   3. Service-to-service authentication
+#
+# For internal testing, use:
+#   gcloud run services proxy nmfs-mra-app --project=ggn-nmfs-wcrmmrapp-dev-1 --region=us-west1
 
 # ==============================================================================
 # NOTE: Public storage access removed due to org policy constraints
