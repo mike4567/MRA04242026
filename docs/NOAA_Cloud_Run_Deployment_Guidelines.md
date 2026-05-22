@@ -1,8 +1,8 @@
 # NOAA Cloud Run Application Deployment Guidelines
 ## Google Cloud Platform within FISMA Boundaries
 
-**Document Version:** 1.0  
-**Last Updated:** May 20, 2026  
+**Document Version:** 2.0  
+**Last Updated:** May 22, 2026  
 **Author:** NOAA Fisheries IT  
 **Classification:** Internal Use
 
@@ -32,9 +32,216 @@ All deployments must comply with:
 
 ---
 
-## 2. Application Architecture Types
+## 2. Regional Deployment Requirements (CRITICAL - Read First)
 
-### 2.1 Public-Facing Web Applications
+> ⚠️ **IMPORTANT:** This section was added May 22, 2026 based on lessons learned. Failing to follow these requirements will result in significant rework.
+
+### 2.1 Approved Regions
+
+All GCP resources for NOAA applications using Private Service Connect **MUST** be deployed in one of these regions:
+
+| Region | Location | Recommended For |
+|--------|----------|-----------------|
+| **us-west2** | Los Angeles | West Coast applications (RECOMMENDED) |
+| **us-east4** | Northern Virginia | East Coast applications |
+
+> ❌ **NOT RECOMMENDED:** us-central1, us-west1 - These regions do NOT support the Private Service Connect architecture required for TIC compliance.
+
+### 2.2 Why Region Matters
+
+Private Service Connect (PSC), which is REQUIRED for TIC-compliant public access, has these constraints:
+
+1. **All resources must be in the SAME region** - Cloud Run, Cloud SQL, Storage, Artifact Registry, and the Internal Load Balancer must all be deployed to the same region
+2. **Shared VPC connectivity** - The platform team's Shared VPC has PSC endpoints only in us-west2 and us-east4
+3. **Cross-region access is NOT supported** - You cannot have Cloud Run in us-west1 connecting to PSC in us-west2
+
+### 2.3 Resource Colocation Checklist
+
+Before deploying, ensure ALL of these resources will be in the SAME region:
+
+- [ ] Cloud Run service
+- [ ] Cloud SQL instance (with Private IP)
+- [ ] GCS Storage bucket
+- [ ] Artifact Registry (Docker images)
+- [ ] VPC Subnet
+- [ ] Serverless NEG
+- [ ] Jumpbox VM (for testing/admin access)
+
+### 2.4 Example: Correct Architecture (us-west2)
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                        us-west2                            │
+│  ┌─────────────────┐    ┌─────────────────┐               │
+│  │   Cloud Run     │    │   Cloud SQL     │               │
+│  │  nmfs-mra-app   │◄──►│ nmfs-mra-db-west2│              │
+│  └────────┬────────┘    │  (10.98.17.3)   │               │
+│           │             └─────────────────┘               │
+│           │                                                │
+│  ┌────────▼────────┐    ┌─────────────────┐               │
+│  │  Serverless NEG │    │   GCS Bucket    │               │
+│  │  nmfs-mra-neg   │    │ nmfs-mra-media  │               │
+│  └────────┬────────┘    └─────────────────┘               │
+│           │                                                │
+│  ┌────────▼────────┐    ┌─────────────────┐               │
+│  │  Internal ALB   │    │    Jumpbox      │               │
+│  │ (Admin deployed)│    │  (us-west2-a)   │               │
+│  └────────┬────────┘    └─────────────────┘               │
+│           │                                                │
+│  ┌────────▼────────┐                                       │
+│  │ Private Service │                                       │
+│  │    Connect      │                                       │
+│  └────────┬────────┘                                       │
+└───────────┼────────────────────────────────────────────────┘
+            │
+            ▼
+    NMFS Perimeter / TIC
+            │
+            ▼
+    Public Internet
+```
+
+---
+
+## 3. Jumpbox VM & IAP Access (REQUIRED)
+
+> ⚠️ **IMPORTANT:** Since Cloud Run services use `internal-and-cloud-load-balancing` ingress, you CANNOT directly access them from your local machine. A jumpbox VM with IAP tunneling is REQUIRED for testing and database administration.
+
+### 3.1 Why You Need a Jumpbox
+
+| Without Jumpbox | With Jumpbox |
+|-----------------|--------------|
+| ❌ Cannot test Cloud Run service | ✅ Can curl/test Cloud Run from inside VPC |
+| ❌ Cannot connect to Cloud SQL | ✅ Can connect to database via private IP |
+| ❌ Cannot verify internal connectivity | ✅ Can diagnose networking issues |
+| ❌ Must wait for full PSC deployment | ✅ Can validate app before PSC is ready |
+
+### 3.2 Jumpbox Architecture
+
+```
+Your Laptop ──IAP Tunnel──► Jumpbox VM ──VPC──► Cloud Run / Cloud SQL
+   (SSH)                   (us-west2-a)        (Private IPs)
+```
+
+### 3.3 Jumpbox Requirements
+
+| Requirement | Specification |
+|-------------|---------------|
+| **OS** | Container-Optimized OS (COS) - auto-updates |
+| **Machine Type** | e2-micro (sufficient for testing) |
+| **Zone** | Same region as Cloud Run (e.g., us-west2-a) |
+| **Network** | Same VPC as Cloud Run |
+| **External IP** | None (private only for security) |
+| **Access Method** | IAP (Identity-Aware Proxy) tunneling only |
+| **Shielded VM** | Required by org policy |
+
+### 3.4 IAP Roles Required
+
+Before you can SSH to the jumpbox, your Google Admin MUST grant you these roles:
+
+| Role | Purpose |
+|------|---------|
+| `roles/iap.tunnelResourceAccessor` | Allow IAP tunnel connection |
+| `roles/compute.osLogin` | Allow SSH login to VM |
+
+**Commands for Admin:**
+```bash
+# Grant IAP Tunnel access
+gcloud projects add-iam-policy-binding [PROJECT_ID] \
+  --member="user:[YOUR_EMAIL]@noaa.gov" \
+  --role="roles/iap.tunnelResourceAccessor"
+
+# Grant OS Login access
+gcloud projects add-iam-policy-binding [PROJECT_ID] \
+  --member="user:[YOUR_EMAIL]@noaa.gov" \
+  --role="roles/compute.osLogin"
+```
+
+### 3.5 Create Jumpbox VM
+
+**Step 1: Create Subnet (if not exists)**
+```bash
+gcloud compute networks subnets create jumpbox-subnet-[REGION] \
+  --network=[VPC_NETWORK] \
+  --region=[REGION] \
+  --range=10.98.64.0/24 \
+  --enable-private-ip-google-access \
+  --project=[PROJECT_ID]
+```
+
+**Step 2: Create IAP Firewall Rule**
+```bash
+gcloud compute firewall-rules create allow-iap-ssh \
+  --network=[VPC_NETWORK] \
+  --allow=tcp:22 \
+  --source-ranges=35.235.240.0/20 \
+  --target-tags=iap-ssh \
+  --description="Allow SSH via IAP tunnel" \
+  --project=[PROJECT_ID]
+```
+
+**Step 3: Create Jumpbox VM**
+```bash
+gcloud compute instances create [APP]-jumpbox \
+  --project=[PROJECT_ID] \
+  --zone=[ZONE] \
+  --machine-type=e2-micro \
+  --subnet=projects/[PROJECT_ID]/regions/[REGION]/subnetworks/jumpbox-subnet-[REGION] \
+  --no-address \
+  --metadata=enable-oslogin=TRUE \
+  --service-account=[APP]-runner@[PROJECT_ID].iam.gserviceaccount.com \
+  --scopes=https://www.googleapis.com/auth/cloud-platform \
+  --tags=iap-ssh \
+  --image-family=cos-stable \
+  --image-project=cos-cloud \
+  --boot-disk-size=10GB \
+  --shielded-secure-boot \
+  --shielded-vtpm \
+  --shielded-integrity-monitoring
+```
+
+### 3.6 Connect to Jumpbox
+
+```bash
+gcloud compute ssh [APP]-jumpbox \
+  --zone=[ZONE] \
+  --project=[PROJECT_ID] \
+  --tunnel-through-iap
+```
+
+### 3.7 Test Cloud Run from Jumpbox
+
+```bash
+# Once connected to jumpbox:
+curl -s https://[CLOUD_RUN_URL]/ | head -20
+curl -I https://[CLOUD_RUN_URL]/
+```
+
+### 3.8 Connect to Cloud SQL from Jumpbox
+
+```bash
+# Using Docker (COS has Docker pre-installed)
+docker run -it --rm postgres:15 \
+  psql "postgresql://[USER]:[PASSWORD]@[PRIVATE_IP]:5432/[DATABASE]"
+```
+
+### 3.9 Cost Management
+
+Stop the jumpbox when not in use to save costs:
+
+```bash
+# Stop (saves ~$3-5/month)
+gcloud compute instances stop [APP]-jumpbox --zone=[ZONE] --project=[PROJECT_ID]
+
+# Start when needed
+gcloud compute instances start [APP]-jumpbox --zone=[ZONE] --project=[PROJECT_ID]
+```
+
+---
+
+## 4. Application Architecture Types
+
+### 4.1 Public-Facing Web Applications
 
 **Description:** Applications accessible from the public internet for external users (e.g., incident reporting, data portals, public APIs).
 
@@ -50,7 +257,7 @@ Public Internet → NMFS TIC/Perimeter → Shared VPC → Private Service Connec
 - TIC-compliant ingress routing
 - SCR/CCB approval required
 
-### 2.2 Internal-Only Applications
+### 4.2 Internal-Only Applications
 
 **Description:** Applications accessible only from within NOAA networks (e.g., admin dashboards, internal tools).
 
@@ -66,9 +273,9 @@ NOAA VPN/Network → Internal ALB → Cloud Run
 
 ---
 
-## 3. Network Architecture Requirements
+## 5. Network Architecture Requirements
 
-### 3.1 TIC Compliance (Critical)
+### 5.1 TIC Compliance (Critical)
 
 **IMPORTANT:** All public-facing traffic MUST flow through NOAA's Trusted Internet Connection (TIC). Direct external access bypasses TIC and is NOT APPROVED.
 
@@ -79,25 +286,25 @@ NOAA VPN/Network → Internal ALB → Cloud Run
 | Cloud Run with `allUsers` IAM | ❌ BLOCKED | Org policy prevents this |
 | Cloud Armor + External LB | ❌ NOT APPROVED | Still bypasses TIC |
 
-### 3.2 Approved Architecture Components
+### 5.2 Approved Architecture Components
 
-#### 3.2.1 Internal Application Load Balancer
+#### 5.2.1 Internal Application Load Balancer
 - **Type:** Regional Internal Application Load Balancer
 - **Scheme:** `INTERNAL_MANAGED`
 - **Deployment:** Admin team deploys via platform Terraform
 - **Developer Responsibility:** Provide Serverless NEG pointing to Cloud Run
 
-#### 3.2.2 Private Service Connect (PSC)
+#### 5.2.2 Private Service Connect (PSC)
 - **Purpose:** Exposes internal LB to the NMFS perimeter network
 - **Deployment:** Network team creates after SCR approval
 - **Requirements:** Forwarding rule and static internal IP
 
-#### 3.2.3 Serverless Network Endpoint Group (NEG)
+#### 5.2.3 Serverless Network Endpoint Group (NEG)
 - **Purpose:** Points to Cloud Run service for load balancer routing
 - **Developer Managed:** Yes
 - **Preserved during migrations:** Yes (reused by internal LB)
 
-### 3.3 Cloud Run Ingress Settings
+### 5.3 Cloud Run Ingress Settings
 
 | Setting | Use Case |
 |---------|----------|
@@ -118,13 +325,13 @@ resource "google_cloud_run_service" "app" {
 
 ---
 
-## 4. IAM Roles & Service Accounts
+## 6. IAM Roles & Service Accounts
 
-### 4.1 Principle of Least Privilege
+### 6.1 Principle of Least Privilege
 
 Every application MUST have a dedicated service account with only the permissions required for operation. Do NOT use default service accounts.
 
-### 4.2 Application Runtime Service Account
+### 6.2 Application Runtime Service Account
 
 **Naming Convention:** `[app-name]-runner@[project-id].iam.gserviceaccount.com`
 
@@ -568,6 +775,7 @@ gcloud run services proxy [SERVICE_NAME] --region=[REGION]
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | May 20, 2026 | Mike McCully | Initial document based on MRA deployment experience |
+| 2.0 | May 22, 2026 | Mike McCully | Added Section 2 (Regional Requirements), Section 3 (Jumpbox/IAP); Critical guidance for us-west2/us-east4 deployment |
 
 ---
 

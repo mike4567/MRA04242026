@@ -3,7 +3,7 @@
 import { ai } from '@/ai/genkit';
 import { z } from 'zod';
 import { query } from '@/lib/db'; 
-import { getStorage } from '@/lib/firebase-admin'; 
+import { Storage } from '@google-cloud/storage';
 import { sendNewIncidentNotification } from '@/services/sms';
 import { generateIncidentId } from '@/lib/utils';
 import { getResponderInfo, type SpecificResponderInfo } from '@/app/actions';
@@ -131,7 +131,9 @@ const createIncidentReportFlow = ai.defineFlow(
 
     if (input.mediaDataUris && input.mediaDataUris.length > 0) {
       const { fileTypeFromBuffer } = await import('file-type');
-      const bucket = getStorage().bucket();
+      const storage = new Storage();
+      const bucketName = process.env.GCS_BUCKET_NAME || 'nmfs-mra-media';
+      const bucket = storage.bucket(bucketName);
       
       const uploadPromises = input.mediaDataUris.map(async (dataUri, index) => {
         const match = dataUri.match(/^data:(.+);base64,(.+)$/);

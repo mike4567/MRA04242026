@@ -50,23 +50,28 @@
 The codebase is undergoing a strict, phased refactor. **DO NOT proceed to the next phase without user approval.**
 * **[COMPLETED] Phase 1: Storage Refactor.** Replaced `firebase-admin` and `firebase` storage with `@google-cloud/storage`.
 * **[COMPLETED] Phase 2: Auth Refactor.** Replaced Firebase Auth with `NextAuth.js` (Auth.js) backed by PostgreSQL.
-* **[COMPLETED] Phase 3: Firebase Cleanup.** Removed all Firebase SDKs, `firestore.rules`, `storage.rules`, `apphosting.yaml`.
-* **[IN PROGRESS] Phase 4: Infrastructure & Deployment (Terraform).** Deploying the refactored Next.js app to Cloud Run.
+* **[COMPLETED] Phase 3: Firebase Cleanup.** Removed all Firebase SDKs and replaced with NextAuth.js and @google-cloud/storage.
+* **[COMPLETED] Phase 4: Infrastructure & Deployment.** App deployed to Cloud Run via Cloud Build.
 
-## 5. Current Status & Next Prompt Action
-We previously attempted to use Cloud Build to deploy the application because the developer account was restricted. However, the Google Admin has just granted the developer account full administrative permissions (Project IAM Admin, Cloud Run Admin, Cloud SQL Admin, Service Account User). 
+## 5. Current Status & Completed Work
 
-**The immediate next step is to execute the following user prompt:**
+### Firebase to NextAuth.js Migration (May 22, 2026)
+The Firebase SDK cleanup was completed with the following changes:
+1. **Removed:** `src/lib/firebase.ts`, `src/lib/firebase-admin.ts`
+2. **Created:** `src/lib/auth.ts` - NextAuth.js configuration with PostgreSQL credentials provider
+3. **Created:** `src/app/api/auth/[...nextauth]/route.ts` - NextAuth API route
+4. **Created:** `src/components/providers/SessionProvider.tsx` - Client-side session wrapper
+5. **Refactored:**
+   - `src/app/login/page.tsx` - Uses `signIn()` from next-auth/react
+   - `src/app/admin/layout.tsx` - Uses `useSession()` for auth state
+   - `src/context/IncidentContext.tsx` - Uses NextAuth session instead of Firebase
+   - `src/ai/flows/create-incident-report.ts` - Uses `@google-cloud/storage` directly
+   - `src/app/incidents/actions.ts` - Uses PostgreSQL via `@/lib/db`
+6. **Updated Dockerfile:** Added vips dependencies for sharp image processing
 
-> *"Good news. My Google Admin just granted my personal user account elevated permissions, including Project IAM Admin, Cloud Run Admin, Cloud SQL Admin, and Service Account User.*
->
-> *Because I now have these roles, we do not need to use Cloud Build to bypass local permission restrictions. We can revert to executing Terraform locally.*
->
-> *Please proceed with Phase 4 with the following instructions:*
-> *1. Discard the `cloudbuild-terraform.yaml` strategy.*
-> *2. Ensure the Terraform code for the Cloud Run service explicitly uses the `service_account_name` argument pointing to our `mra-app-runner` service account.*
-> *3. Run `terraform apply` locally using the plan we generated earlier (or generate a new plan and apply it) to deploy the Next.js application to Cloud Run.*
->
-> *Let me know if you run into any local deployment errors!"*
+### Build & Deploy Process
+- Build uses Cloud Build with impersonation: `mra-app-builder@ggn-nmfs-wcrmmrapp-dev-1.iam.gserviceaccount.com`
+- Deploy requires updating Cloud Run service with new image
+- Service account for runtime: `mra-app-runner@ggn-nmfs-wcrmmrapp-dev-1.iam.gserviceaccount.com`
 
-**Instruction for new Cline Session:** Read this entire document to establish context. Then, acknowledge receipt of this context and begin executing the instructions listed in the "Current Status & Next Prompt Action" section.
+**Instruction for new Cline Session:** Read this document to understand the architecture. The app now uses NextAuth.js with PostgreSQL for authentication instead of Firebase.
