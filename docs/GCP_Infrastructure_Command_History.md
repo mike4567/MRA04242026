@@ -606,6 +606,16 @@ gcloud run services delete nmfs-mra-app \
   --project=ggn-nmfs-wcrmmrapp-dev-1
 ```
 
+### 12.17 Create Serverless NEG in us-west2
+```bash
+gcloud compute network-endpoint-groups create nmfs-mra-neg \
+  --region=us-west2 \
+  --network-endpoint-type=serverless \
+  --cloud-run-service=nmfs-mra-app \
+  --project=ggn-nmfs-wcrmmrapp-dev-1
+```
+**Result:** Created serverless NEG pointing to Cloud Run service for Internal LB routing
+
 ---
 
 ## Section 13: Current Resource State (May 22, 2026)
@@ -614,6 +624,7 @@ gcloud run services delete nmfs-mra-app \
 | Resource | Type | Location | Status |
 |----------|------|----------|--------|
 | `nmfs-mra-app` | Cloud Run Service | us-west2 | ✅ Running |
+| `nmfs-mra-neg` | Serverless NEG | us-west2 | ✅ Active (points to nmfs-mra-app) |
 | `nmfs-mra-db-west2` | Cloud SQL Instance | us-west2 | ✅ Running (IP: 10.98.17.3) |
 | `nmfs-mra-media-west2` | GCS Bucket | us-west2 | ✅ Active |
 | `dev-nmfs-mra-media-west2` | GCS Bucket | us-west2 | ✅ Active |

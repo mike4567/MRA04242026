@@ -60,12 +60,7 @@ gcloud projects add-iam-policy-binding ggn-nmfs-wcrmmrapp-dev-1 \
 ### 1. Connect to Jumpbox via IAP SSH
 
 **From Windows (PowerShell or Command Prompt):**
-```bash
-gcloud compute ssh mra-jumpbox \
-  --zone=us-west2-a \
-  --project=ggn-nmfs-wcrmmrapp-dev-1 \
-  --tunnel-through-iap
-```
+gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap
 
 **First time only:** You'll be prompted to create SSH keys. Press `Y` to continue.
 
