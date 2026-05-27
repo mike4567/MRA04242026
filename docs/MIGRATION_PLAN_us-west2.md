@@ -320,3 +320,61 @@ Continue with remaining phases from the plan above.
 - All Cloud Run deployments must use `--impersonate-service-account=mra-app-builder@ggn-nmfs-wcrmmrapp-dev-1.iam.gserviceaccount.com`
 - Keep bucket names as `nmfs-mra-media-west2` (user confirmed)
 - Downtime is acceptable
+
+---
+
+## Phase 7: SSL Certificate & Internal Load Balancer (May 26, 2026)
+
+### Status: ⏳ In Progress
+
+**Official Domain Assigned:** `mra.fisheries.noaa.gov`
+
+### 7.1 DoD PKI Certificate Generated
+```bash
+# Private key and CSR generated locally
+mkdir -p certs
+openssl genrsa -out certs/mra_app.key 2048
+openssl req -new -key certs/mra_app.key -out certs/mra_app.csr \
+  -subj "/CN=mra.fisheries.noaa.gov" -sha256
+```
+**Files Created:**
+- `certs/mra_app.key` - Private key (NEVER commit to git)
+- `certs/mra_app.csr` - CSR for DoD portal submission
+- `certs/mra_app.cer` - Placeholder for signed certificate
+
+### 7.2 Terraform Internal ALB Configuration
+Added to `terraform/main.tf`:
+- `google_compute_ssl_certificate.dod_cert` - Self-managed DoD certificate
+- `google_compute_region_network_endpoint_group.serverless_neg` - Cloud Run NEG
+- `google_compute_backend_service.mra_backend` - Internal backend
+- `google_compute_region_url_map.mra_url_map` - URL routing
+- `google_compute_region_target_https_proxy.mra_https_proxy` - HTTPS termination
+- `google_compute_forwarding_rule.mra_forwarding_rule` - Internal forwarding rule
+
+### 7.3 Pending Actions
+- [ ] Submit CSR to DoD PKI portal
+- [ ] Receive signed certificate and save to `certs/mra_app.cer`
+- [ ] Run `terraform apply` to provision Internal ALB
+- [ ] Configure DNS: `mra.fisheries.noaa.gov` → Internal LB IP
+
+---
+
+## Final Verification Checklist (Updated May 26, 2026)
+
+### Infrastructure Migration ✅
+- [x] Cloud Run responds in us-west2
+- [x] Database connection works (Private IP: 10.98.17.3)
+- [x] Storage bucket accessible (nmfs-mra-media-west2)
+- [x] Jumpbox SSH via IAP works (us-west2-a)
+- [x] All old resources cleaned up
+
+### SSL & Load Balancer ⏳
+- [x] DoD PKI CSR generated for mra.fisheries.noaa.gov
+- [ ] Certificate received from DoD PKI portal
+- [ ] Internal ALB deployed via Terraform
+- [ ] DNS configured for mra.fisheries.noaa.gov
+
+---
+
+*Migration plan created: May 22, 2026*  
+*Last updated: May 26, 2026 (Added Phase 7: SSL & Internal ALB)*

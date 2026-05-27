@@ -60,23 +60,47 @@ gcloud projects add-iam-policy-binding ggn-nmfs-wcrmmrapp-dev-1 \
 ### 1. Connect to Jumpbox via IAP SSH
 
 **From Windows (PowerShell or Command Prompt):**
+| Authenticate developer to GCP with NOAA credentials |
+gcloud auth login mike.mccully@noaa.gov
+
+| Set the active GCP project for all subsequent commands |
+gcloud config set project ggn-nmfs-wcrmmrapp-dev-1
+
 gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap
 
 **First time only:** You'll be prompted to create SSH keys. Press `Y` to continue.
 
 ### 2. Test Cloud Run Service from Jumpbox
 
-Once connected to the jumpbox, test the Cloud Run service:
+Once connected to the jumpbox, you can test the Cloud Run service. Since the service has `internal-and-cloud-load-balancing` ingress restriction, you need to authenticate using the VM's service account identity.
 
+**Step 1: Get an Identity Token**
 ```bash
-# Test the app home page
-curl -s https://nmfs-mra-app-ibkcsx465a-wl.a.run.app/ | head -20
+# Retrieve an identity token from the metadata server
+TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https://nmfs-mra-app-ibkcsx465a-wl.a.run.app" -H "Metadata-Flavor: Google")
+```
+
+**Step 2: Test the Application with Authentication**
+```bash
+# Test the app home page (authenticated)
+curl -H "Authorization: Bearer $TOKEN" https://nmfs-mra-app-ibkcsx465a-wl.a.run.app
 
 # Test the login page
-curl -s https://nmfs-mra-app-ibkcsx465a-wl.a.run.app/login | head -20
+curl -H "Authorization: Bearer $TOKEN" https://nmfs-mra-app-ibkcsx465a-wl.a.run.app/login
 
-# Check health/connectivity
-curl -I https://nmfs-mra-app-ibkcsx465a-wl.a.run.app/
+# Check health/connectivity (shows HTTP status)
+curl -I -H "Authorization: Bearer $TOKEN" https://nmfs-mra-app-ibkcsx465a-wl.a.run.app/
+
+# Pretty-print JSON API responses (if applicable)
+curl -s -H "Authorization: Bearer $TOKEN" https://nmfs-mra-app-ibkcsx465a-wl.a.run.app/api/health | jq .
+```
+
+**Expected Output:** You should receive the full HTML content of the "West Coast Marine Incidents" application home page, indicating the service is running correctly.
+
+**Quick Combined Command:**
+```bash
+# One-liner to test the app
+curl -H "Authorization: Bearer $(curl -s 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https://nmfs-mra-app-ibkcsx465a-wl.a.run.app' -H 'Metadata-Flavor: Google')" https://nmfs-mra-app-ibkcsx465a-wl.a.run.app
 ```
 
 ### 3. Connect to Cloud SQL Database
@@ -124,17 +148,89 @@ SELECT id, email, role FROM users;
 \q
 ```
 
-### 4. SSH Port Forwarding (Browse App from Local Machine)
+### 4. Browse Application in Web Browser
 
-To browse the Cloud Run app from your local machine's browser via the jumpbox:
+There are several methods to access the web application with a full browser experience.
+
+---
+
+#### Option A: Cloud Run Proxy (Recommended - Easiest)
+
+The Cloud Run proxy authenticates using your local gcloud credentials. Run this from your **local Windows machine** (not the jumpbox):
+
+**Step 1: Start the Proxy**
+```powershell
+gcloud run services proxy nmfs-mra-app --region=us-west2 --project=ggn-nmfs-wcrmmrapp-dev-1 --port=9999
+```
+
+**Step 2: Open Browser**
+```
+http://127.0.0.1:9999
+```
+
+The proxy will authenticate using your `mike.mccully@noaa.gov` credentials (which must have `roles/run.invoker` on the service).
+
+**To stop the proxy:** Press `Ctrl+C` in the terminal.
+
+---
+
+#### Option B: SSH Tunnel with IAP + SOCKS Proxy
+
+This method creates a SOCKS proxy through the jumpbox, allowing full browser access.
+
+**Step 1: Start SOCKS Proxy (from local machine)**
+
+*Windows PowerShell:*
+```powershell
+gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap --ssh-flag="-D" --ssh-flag="1080" --ssh-flag="-N"
+```
+
+*Linux/Mac/Git Bash:*
+```bash
+gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap -- -D 1080 -N
+```
+
+**Step 2: Configure Browser to Use SOCKS Proxy**
+
+*Firefox:*
+1. Settings → Network Settings → Settings
+2. Select "Manual proxy configuration"
+3. SOCKS Host: `127.0.0.1`, Port: `1080`
+4. Select "SOCKS v5"
+5. Check "Proxy DNS when using SOCKS v5"
+6. Click OK
+
+*Chrome (Windows):*
+```powershell
+# Start Chrome with SOCKS proxy
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --proxy-server="socks5://127.0.0.1:1080" --user-data-dir="C:\temp\chrome-proxy"
+```
+
+**Step 3: Navigate to the App**
+
+With the SOCKS proxy configured, you still need authentication. Use the direct URL:
+```
+https://nmfs-mra-app-ibkcsx465a-wl.a.run.app
+```
+
+*Note: This method routes traffic through the jumpbox but you may still need IAM authentication for Cloud Run.*
+
+---
+
+#### Option C: SSH Port Forwarding (Legacy Method)
+
+To browse the Cloud Run app from your local machine's browser via direct port forwarding:
 
 **Terminal 1 - Start IAP Tunnel:**
+
+*Windows PowerShell:*
+```powershell
+gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap --ssh-flag="-L" --ssh-flag="8080:nmfs-mra-app-ibkcsx465a-wl.a.run.app:443"
+```
+
+*Linux/Mac/Git Bash:*
 ```bash
-gcloud compute ssh mra-jumpbox \
-  --zone=us-west2-a \
-  --project=ggn-nmfs-wcrmmrapp-dev-1 \
-  --tunnel-through-iap \
-  -- -L 8080:nmfs-mra-app-ibkcsx465a-wl.a.run.app:443
+gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap -- -L 8080:nmfs-mra-app-ibkcsx465a-wl.a.run.app:443
 ```
 
 **Then open in browser:**
@@ -142,7 +238,15 @@ gcloud compute ssh mra-jumpbox \
 https://localhost:8080
 ```
 
-*Note: You may get a certificate warning since you're accessing via localhost.*
+*Note: You may get a certificate warning since you're accessing via localhost. This method may have authentication issues with Cloud Run's IAM requirements.*
+
+---
+
+#### Recommended Testing Workflow
+
+1. **For Quick Testing:** Use **Option A (Cloud Run Proxy)** - simplest setup
+2. **For Full Internal Network Access:** Use **Option B (SOCKS Proxy)** - most comprehensive
+3. **For Curl/API Testing:** SSH to jumpbox and use identity token method (Section 2)
 
 ---
 
@@ -253,8 +357,10 @@ gcloud compute firewall-rules list \
 | Start jumpbox | `gcloud compute instances start mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1` |
 | Stop jumpbox | `gcloud compute instances stop mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1` |
 | Check status | `gcloud compute instances describe mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --format="value(status)"` |
+| **Browse app (local)** | `gcloud run services proxy nmfs-mra-app --region=us-west2 --project=ggn-nmfs-wcrmmrapp-dev-1 --port=9999` then open `http://127.0.0.1:9999` |
+| **Test via jumpbox** | `TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https://nmfs-mra-app-ibkcsx465a-wl.a.run.app" -H "Metadata-Flavor: Google") && curl -H "Authorization: Bearer $TOKEN" https://nmfs-mra-app-ibkcsx465a-wl.a.run.app` |
 
 ---
 
 *Document created: May 22, 2026*
-*Last updated: May 22, 2026 (Migrated to us-west2)*
+*Last updated: May 26, 2026 (Added authenticated testing procedures and browser access options)*

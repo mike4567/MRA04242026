@@ -690,18 +690,136 @@ gcloud compute networks subnets delete jumpbox-subnet \
 
 ---
 
-## Section 15: Pending Actions
+## Section 15: DoD PKI Certificate Generation (May 26, 2026)
 
-1. **Admin to deploy Internal Application Load Balancer** via platform Terraform
-2. **SCR approval** at CCB for Private Service Connect
-3. **SSL certificate request** to ra@noaa.gov for `mra-west.fisheries.noaa.gov`
-4. **Cloud Run ingress update** to `internal` after internal LB deployment
-5. **Cleanup old resources** after verification (see Section 14)
+### 15.1 Generate Private Key and CSR
+```bash
+# Create certs directory
+mkdir -p certs
+
+# Generate 2048-bit RSA private key
+openssl genrsa -out certs/mra_app.key 2048
+
+# Generate CSR for mra.fisheries.noaa.gov
+openssl req -new -key certs/mra_app.key -out certs/mra_app.csr \
+  -subj "/CN=mra.fisheries.noaa.gov" -sha256
+
+# Verify CSR
+openssl req -in certs/mra_app.csr -noout -verify
+openssl req -in certs/mra_app.csr -noout -subject
+```
+**Result:** CSR generated for submission to DoD PKI portal
+
+### 15.2 CSR Output (for DoD Portal Submission)
+```
+-----BEGIN CERTIFICATE REQUEST-----
+MIICZjCCAU4CAQAwITEfMB0GA1UEAwwWbXJhLmZpc2hlcmllcy5ub2FhLmdvdjCC
+ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMLuMa0OckDAiKyWlBQ+78aR
+2SNpNRY+IpxBzbYEgxlXOmE+5d4fZrA6uYNXRJr4lxQf9VTIvpm2s+lxQ8+owgrL
+yFbQaPgTfcl9TYc0/gVDeky3yqIOjkVIjfVbgb72jYr+HFLNShZ6mWWgiclsXfik
+aPOAdSnK3o8yaWNPh9ElplEhyzqHuRww8JbttFJlVZ4kvJnBU0Deqgkp7MfP3l+q
+y9AqxGNe89RKO3B5+ndOmFIz6rBZvzLM9KMbeEfxketiXv69xc9ScaNHPFBDziNd
+sQ7k3UkjnmhQCwSkWKpQhTADNDWl8MkHZcqkEp5ntZjb40g2+O1+U6E6Nk/RbbEC
+AwEAAaAAMA0GCSqGSIb3DQEBCwUAA4IBAQA+1elwU1h6fqZYmN1uQVTBIJVZQLve
+kdcIErlHrtvdDnobKpjtDgG/2kon42sq9noVqyR8vzGvNVQg/VOcJkqsFMO2NxP5
+2aEkTsxbePGOLeqvvArGpzNNRtIq/mLFNP72FEQgu5Vv+dOrlAQE/hpp+MYZcSfD
+Q2Jm6C5ls3baS0UDwC1Ah7QhVjzZyf3iQ2ptFbZ9blplookctTkaWx9kucDKbQjm
+kGdzj+iRjyi/7ARVTUzuJCPajKbZ+XPijZDXBvbPhRRPm8ZnaoP9n7fyF/6/up9T
+2x6Opdk/I7KgWZ6o0ToVZA0VCC5Ya//4g4rMLGRXGgk7HuInmfTuS7yQ
+-----END CERTIFICATE REQUEST-----
+```
+
+### 15.3 Files Created
+| File | Purpose | Status |
+|------|---------|--------|
+| `certs/mra_app.key` | 2048-bit RSA private key | ✅ Generated |
+| `certs/mra_app.csr` | Certificate Signing Request | ✅ Generated |
+| `certs/mra_app.cer` | DoD-signed certificate | ⏳ Pending |
 
 ---
 
-**Document Version:** 2.0  
-**Last Updated:** May 22, 2026  
+## Section 16: Internal Application Load Balancer Configuration (May 26, 2026)
+
+### 16.1 Terraform Resources Added to main.tf
+The following resources were added to `terraform/main.tf` for the Internal ALB:
+
+```hcl
+# SSL Certificate (DoD PKI Self-Managed)
+resource "google_compute_ssl_certificate" "dod_cert" {
+  name        = "mra-dod-ssl-cert"
+  private_key = file("${path.module}/../certs/mra_app.key")
+  certificate = file("${path.module}/../certs/mra_app.cer")
+}
+
+# Serverless NEG for Cloud Run
+resource "google_compute_region_network_endpoint_group" "serverless_neg" {
+  name                  = "mra-serverless-neg"
+  network_endpoint_type = "SERVERLESS"
+  region                = var.region
+  cloud_run { service = google_cloud_run_service.app.name }
+}
+
+# Backend Service
+resource "google_compute_backend_service" "mra_backend" {
+  name                  = "mra-backend-service"
+  protocol              = "HTTPS"
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  backend { group = google_compute_region_network_endpoint_group.serverless_neg.id }
+}
+
+# URL Map
+resource "google_compute_region_url_map" "mra_url_map" {
+  name            = "mra-url-map"
+  region          = var.region
+  default_service = google_compute_backend_service.mra_backend.id
+}
+
+# Target HTTPS Proxy
+resource "google_compute_region_target_https_proxy" "mra_https_proxy" {
+  name             = "mra-https-proxy"
+  region           = var.region
+  url_map          = google_compute_region_url_map.mra_url_map.id
+  ssl_certificates = [google_compute_ssl_certificate.dod_cert.id]
+}
+
+# Forwarding Rule (Internal)
+resource "google_compute_forwarding_rule" "mra_forwarding_rule" {
+  name                  = "mra-internal-https-rule"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  port_range            = "443"
+  target                = google_compute_region_target_https_proxy.mra_https_proxy.id
+  network               = "mra-local-network"
+  subnetwork            = "jumpbox-subnet-west2"
+}
+```
+
+### 16.2 Deployment Command (After Certificate Received)
+```bash
+cd terraform
+terraform init
+terraform plan -var-file="terraform.tfvars"
+terraform apply -var-file="terraform.tfvars"
+```
+
+---
+
+## Section 17: Pending Actions
+
+1. ~~**SSL certificate request** to ra@noaa.gov for `mra-west.fisheries.noaa.gov`~~ → **UPDATED:** CSR generated for `mra.fisheries.noaa.gov`, pending DoD PKI portal submission
+2. **Submit CSR to DoD PKI portal** and await certificate approval
+3. **Place DoD-signed certificate** in `certs/mra_app.cer`
+4. **Run `terraform apply`** to provision Internal ALB with DoD certificate
+5. **Admin to configure DNS** for `mra.fisheries.noaa.gov` → Internal LB IP
+6. **SCR approval** at CCB for Private Service Connect
+7. **Cloud Run ingress update** to `internal` after internal LB deployment
+8. **Cleanup old resources** after verification (see Section 14)
+
+---
+
+**Document Version:** 3.0  
+**Last Updated:** May 26, 2026  
 **Change Log:**
 - v1.0 (May 20, 2026): Initial document
 - v2.0 (May 22, 2026): Added us-west2 migration commands, jumpbox configuration, builder service account
+- v3.0 (May 26, 2026): Added DoD PKI CSR generation, Internal ALB Terraform configuration for mra.fisheries.noaa.gov

@@ -34,3 +34,12 @@ yarn-error.log*
 *.tfvars
 
 /gitignore*
+
+# certificates - NEVER commit private keys or certificates
+certs/
+*.key
+*.csr
+*.cer
+*.crt
+*.p12
+*.pfx

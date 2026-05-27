@@ -249,16 +249,99 @@ resource "google_cloud_run_service" "app" {
 }
 
 # ==============================================================================
-# 9. PUBLIC ACCESS - BLOCKED BY ORG POLICY
+# 9. INTERNAL APPLICATION LOAD BALANCER WITH DoD PKI CERTIFICATE
 # ==============================================================================
-# NOTE: allUsers IAM binding is blocked by NMFS organization policy.
-# Access must be granted through:
-#   1. IAP (Identity-Aware Proxy) for authenticated users, OR
-#   2. Load Balancer with IAP, OR
-#   3. Service-to-service authentication
+# This section configures an Internal Application Load Balancer with:
+#   - DoD PKI self-managed SSL certificate for mra.fisheries.noaa.gov
+#   - Serverless NEG pointing to Cloud Run
+#   - Internal HTTPS proxy for secure access
 #
-# For internal testing, use:
-#   gcloud run services proxy nmfs-mra-app --project=ggn-nmfs-wcrmmrapp-dev-1 --region=us-west1
+# NOTE: Certificate was created manually in GCP Certificate Manager on May 27, 2026
+#   - Name: mra-fisheries-noaa-gov
+#   - Domain: mra.fisheries.noaa.gov
+#   - Type: Self-managed
+#   - Expires: May 26, 2029
+# ==============================================================================
+
+# --- SSL Certificate ---
+# Certificate was manually created in GCP Certificate Manager on May 27, 2026
+# Name: mra-fisheries-noaa-gov
+# Domain: mra.fisheries.noaa.gov  
+# Type: Self-managed
+# Expires: May 26, 2029
+# Label: app:mra
+#
+# Since there's no data source for Certificate Manager certificates,
+# we reference it directly by its full resource path in the HTTPS proxy.
+
+# --- Serverless Network Endpoint Group (NEG) for Cloud Run ---
+# Connects the Load Balancer to the Cloud Run service
+resource "google_compute_region_network_endpoint_group" "serverless_neg" {
+  name                  = "mra-serverless-neg"
+  network_endpoint_type = "SERVERLESS"
+  region                = var.region
+
+  cloud_run {
+    service = google_cloud_run_service.app.name
+  }
+}
+
+# --- Backend Service ---
+# Routes traffic to the Serverless NEG
+resource "google_compute_backend_service" "mra_backend" {
+  name                  = "mra-backend-service"
+  protocol              = "HTTPS"
+  port_name             = "http"
+  timeout_sec           = 30
+  load_balancing_scheme = "INTERNAL_MANAGED"
+
+  backend {
+    group = google_compute_region_network_endpoint_group.serverless_neg.id
+  }
+
+  # Health check not required for serverless NEGs
+}
+
+# --- URL Map ---
+# Routes all requests to the backend service
+resource "google_compute_region_url_map" "mra_url_map" {
+  name            = "mra-url-map"
+  region          = var.region
+  default_service = google_compute_backend_service.mra_backend.id
+}
+
+# --- Target HTTPS Proxy ---
+# Terminates HTTPS using the DoD certificate from Certificate Manager
+resource "google_compute_region_target_https_proxy" "mra_https_proxy" {
+  name             = "mra-https-proxy"
+  region           = var.region
+  url_map          = google_compute_region_url_map.mra_url_map.id
+  # Certificate Manager certificates use certificate_manager_certificates attribute
+  certificate_manager_certificates = [
+    "//certificatemanager.googleapis.com/${data.google_certificate_manager_certificate.dod_cert.id}"
+  ]
+}
+
+# --- Forwarding Rule (Internal) ---
+# Exposes the load balancer on an internal IP
+resource "google_compute_forwarding_rule" "mra_forwarding_rule" {
+  name                  = "mra-internal-https-rule"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  port_range            = "443"
+  target                = google_compute_region_target_https_proxy.mra_https_proxy.id
+  network               = "mra-local-network"
+  subnetwork            = "jumpbox-subnet-west2"
+  ip_protocol           = "TCP"
+}
+
+# ==============================================================================
+# NOTE: Public access blocked by org policy - use Internal ALB above
+# ==============================================================================
+# Access must be granted through:
+#   1. Internal Application Load Balancer (configured above)
+#   2. IAP (Identity-Aware Proxy) for authenticated users
+#   3. Jumpbox for curl/API testing
 
 # ==============================================================================
 # NOTE: Public storage access removed due to org policy constraints
@@ -282,4 +365,14 @@ output "cloud_sql_connection_name" {
 output "gcs_bucket_name" {
   description = "The name of the GCS media bucket"
   value       = data.google_storage_bucket.media_bucket.name
+}
+
+output "internal_lb_ip" {
+  description = "The internal IP address of the Load Balancer"
+  value       = google_compute_forwarding_rule.mra_forwarding_rule.ip_address
+}
+
+output "ssl_certificate_name" {
+  description = "The name of the DoD PKI SSL certificate"
+  value       = data.google_certificate_manager_certificate.dod_cert.name
 }

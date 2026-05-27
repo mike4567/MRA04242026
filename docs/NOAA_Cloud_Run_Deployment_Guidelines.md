@@ -770,12 +770,101 @@ gcloud run services proxy [SERVICE_NAME] --region=[REGION]
 
 ---
 
-## Appendix C: Document History
+## Appendix C: DoD PKI Certificate Requirements (Added May 26, 2026)
+
+### C.1 Certificate Generation Process
+
+For applications requiring DoD-signed SSL certificates:
+
+1. **Generate Private Key & CSR locally:**
+   ```bash
+   mkdir -p certs
+   openssl genrsa -out certs/app.key 2048
+   openssl req -new -key certs/app.key -out certs/app.csr \
+     -subj "/CN=your-app.fisheries.noaa.gov" -sha256
+   ```
+
+2. **Submit CSR to DoD PKI Portal** (via NOAA IT security team)
+
+3. **Save signed certificate** to `certs/app.cer` (PEM format)
+
+4. **Add to .gitignore** - NEVER commit private keys:
+   ```
+   certs/
+   *.key
+   *.csr
+   *.cer
+   ```
+
+### C.2 Terraform Self-Managed Certificate
+
+```hcl
+resource "google_compute_ssl_certificate" "dod_cert" {
+  name        = "app-dod-ssl-cert"
+  private_key = file("${path.module}/../certs/app.key")
+  certificate = file("${path.module}/../certs/app.cer")
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+```
+
+### C.3 Internal ALB with DoD Certificate
+
+```hcl
+# Serverless NEG for Cloud Run
+resource "google_compute_region_network_endpoint_group" "serverless_neg" {
+  name                  = "app-serverless-neg"
+  network_endpoint_type = "SERVERLESS"
+  region                = var.region
+  cloud_run { service = google_cloud_run_service.app.name }
+}
+
+# Backend Service
+resource "google_compute_backend_service" "backend" {
+  name                  = "app-backend-service"
+  protocol              = "HTTPS"
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  backend { group = google_compute_region_network_endpoint_group.serverless_neg.id }
+}
+
+# URL Map
+resource "google_compute_region_url_map" "url_map" {
+  name            = "app-url-map"
+  region          = var.region
+  default_service = google_compute_backend_service.backend.id
+}
+
+# Target HTTPS Proxy with DoD Certificate
+resource "google_compute_region_target_https_proxy" "https_proxy" {
+  name             = "app-https-proxy"
+  region           = var.region
+  url_map          = google_compute_region_url_map.url_map.id
+  ssl_certificates = [google_compute_ssl_certificate.dod_cert.id]
+}
+
+# Internal Forwarding Rule
+resource "google_compute_forwarding_rule" "forwarding_rule" {
+  name                  = "app-internal-https-rule"
+  region                = var.region
+  load_balancing_scheme = "INTERNAL_MANAGED"
+  port_range            = "443"
+  target                = google_compute_region_target_https_proxy.https_proxy.id
+  network               = "your-vpc-network"
+  subnetwork            = "your-subnet"
+}
+```
+
+---
+
+## Appendix D: Document History
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | May 20, 2026 | Mike McCully | Initial document based on MRA deployment experience |
 | 2.0 | May 22, 2026 | Mike McCully | Added Section 2 (Regional Requirements), Section 3 (Jumpbox/IAP); Critical guidance for us-west2/us-east4 deployment |
+| 2.1 | May 26, 2026 | Mike McCully | Added Appendix C: DoD PKI Certificate Requirements and Internal ALB Terraform patterns |
 
 ---
 

@@ -74,4 +74,29 @@ The Firebase SDK cleanup was completed with the following changes:
 - Deploy requires updating Cloud Run service with new image
 - Service account for runtime: `mra-app-runner@ggn-nmfs-wcrmmrapp-dev-1.iam.gserviceaccount.com`
 
-**Instruction for new Cline Session:** Read this document to understand the architecture. The app now uses NextAuth.js with PostgreSQL for authentication instead of Firebase.
+## 6. SSL Certificate & Internal Load Balancer (May 26, 2026)
+
+### DoD PKI Certificate
+A Certificate Signing Request (CSR) was generated for the official domain:
+- **Domain:** `mra.fisheries.noaa.gov`
+- **Files Location:** `certs/` directory (gitignored)
+  - `certs/mra_app.key` - Private key (2048-bit RSA)
+  - `certs/mra_app.csr` - CSR for DoD portal submission
+  - `certs/mra_app.cer` - Placeholder for signed certificate
+
+### Internal Application Load Balancer
+Terraform configuration added to `terraform/main.tf` for Internal ALB:
+- Self-managed SSL certificate using DoD PKI
+- Serverless NEG pointing to Cloud Run
+- Internal HTTPS proxy with forwarding rule
+- Network: `mra-local-network`, Subnet: `jumpbox-subnet-west2`
+
+### Pending Actions
+1. Submit CSR to DoD PKI portal
+2. Save signed certificate to `certs/mra_app.cer`
+3. Run `terraform apply` to provision Internal ALB
+4. Configure DNS: `mra.fisheries.noaa.gov` → Internal LB IP
+
+---
+
+**Instruction for new Cline Session:** Read this document to understand the architecture. The app now uses NextAuth.js with PostgreSQL for authentication instead of Firebase. SSL certificate provisioning is in progress for mra.fisheries.noaa.gov - see Section 6.
