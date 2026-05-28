@@ -42,21 +42,21 @@ data "google_service_account" "app_sa" {
 }
 
 # ==============================================================================
-# 3. STORAGE - EXISTING BUCKET (nmfs-mra-media)
+# 3. STORAGE - EXISTING BUCKET (nmfs-mra-media-west2)
 # ==============================================================================
-# The GCS bucket was already created in a previous Terraform run.
+# The GCS bucket was migrated to us-west2 on May 22, 2026.
 # Using data block to reference the existing bucket.
 data "google_storage_bucket" "media_bucket" {
-  name = "nmfs-mra-media"
+  name = "nmfs-mra-media-west2"
 }
 
 # ==============================================================================
-# 4. DATABASE - EXISTING CLOUD SQL INSTANCE (nmfs-mra-db-instance)
+# 4. DATABASE - EXISTING CLOUD SQL INSTANCE (nmfs-mra-db-west2)
 # ==============================================================================
-# The Cloud SQL instance, database, and user were already created.
+# The Cloud SQL instance was migrated to us-west2 on May 22, 2026.
 # Using data blocks to reference the existing resources.
 data "google_sql_database_instance" "postgres" {
-  name = "nmfs-mra-db-instance"
+  name = "nmfs-mra-db-west2"
 }
 
 # Note: google_sql_database and google_sql_user do not have data sources.
@@ -249,98 +249,29 @@ resource "google_cloud_run_service" "app" {
 }
 
 # ==============================================================================
-# 9. INTERNAL APPLICATION LOAD BALANCER WITH DoD PKI CERTIFICATE
+# 9. INTERNAL APPLICATION LOAD BALANCER (ADMIN-MANAGED)
 # ==============================================================================
-# This section configures an Internal Application Load Balancer with:
-#   - DoD PKI self-managed SSL certificate for mra.fisheries.noaa.gov
-#   - Serverless NEG pointing to Cloud Run
-#   - Internal HTTPS proxy for secure access
+# The Internal Application Load Balancer was created by the Google Admin team
+# via platform Terraform on May 27, 2026. DO NOT create these resources here.
 #
-# NOTE: Certificate was created manually in GCP Certificate Manager on May 27, 2026
-#   - Name: mra-fisheries-noaa-gov
-#   - Domain: mra.fisheries.noaa.gov
-#   - Type: Self-managed
-#   - Expires: May 26, 2029
-# ==============================================================================
-
-# --- SSL Certificate ---
-# Certificate was manually created in GCP Certificate Manager on May 27, 2026
-# Name: mra-fisheries-noaa-gov
-# Domain: mra.fisheries.noaa.gov  
-# Type: Self-managed
-# Expires: May 26, 2029
-# Label: app:mra
+# ADMIN-CREATED RESOURCES:
+#   - Certificate: mra-fisheries-noaa-gov-05272026 (expires 2029-05-26)
+#   - Backend Service: mra-backend → nmfs-mra-neg
+#   - URL Map: mra-lb-url-map
+#   - HTTPS Proxy: mra-lb-https-proxy
+#   - Forwarding Rule: mra-lb-frontend (IP: 10.150.0.2)
+#   - PSC Attachment: mra-psc-attachment (ACCEPT_MANUAL)
 #
-# Since there's no data source for Certificate Manager certificates,
-# we reference it directly by its full resource path in the HTTPS proxy.
-
-# --- Serverless Network Endpoint Group (NEG) for Cloud Run ---
-# Connects the Load Balancer to the Cloud Run service
-resource "google_compute_region_network_endpoint_group" "serverless_neg" {
-  name                  = "mra-serverless-neg"
-  network_endpoint_type = "SERVERLESS"
-  region                = var.region
-
-  cloud_run {
-    service = google_cloud_run_service.app.name
-  }
-}
-
-# --- Backend Service ---
-# Routes traffic to the Serverless NEG
-resource "google_compute_backend_service" "mra_backend" {
-  name                  = "mra-backend-service"
-  protocol              = "HTTPS"
-  port_name             = "http"
-  timeout_sec           = 30
-  load_balancing_scheme = "INTERNAL_MANAGED"
-
-  backend {
-    group = google_compute_region_network_endpoint_group.serverless_neg.id
-  }
-
-  # Health check not required for serverless NEGs
-}
-
-# --- URL Map ---
-# Routes all requests to the backend service
-resource "google_compute_region_url_map" "mra_url_map" {
-  name            = "mra-url-map"
-  region          = var.region
-  default_service = google_compute_backend_service.mra_backend.id
-}
-
-# --- Target HTTPS Proxy ---
-# Terminates HTTPS using the DoD certificate from Certificate Manager
-resource "google_compute_region_target_https_proxy" "mra_https_proxy" {
-  name             = "mra-https-proxy"
-  region           = var.region
-  url_map          = google_compute_region_url_map.mra_url_map.id
-  # Certificate Manager certificates use certificate_manager_certificates attribute
-  certificate_manager_certificates = [
-    "//certificatemanager.googleapis.com/${data.google_certificate_manager_certificate.dod_cert.id}"
-  ]
-}
-
-# --- Forwarding Rule (Internal) ---
-# Exposes the load balancer on an internal IP
-resource "google_compute_forwarding_rule" "mra_forwarding_rule" {
-  name                  = "mra-internal-https-rule"
-  region                = var.region
-  load_balancing_scheme = "INTERNAL_MANAGED"
-  port_range            = "443"
-  target                = google_compute_region_target_https_proxy.mra_https_proxy.id
-  network               = "mra-local-network"
-  subnetwork            = "jumpbox-subnet-west2"
-  ip_protocol           = "TCP"
-}
+# The Serverless NEG (nmfs-mra-neg) was created earlier by the developer.
+# It points to the Cloud Run service and is referenced by the admin's backend.
+# ==============================================================================
 
 # ==============================================================================
-# NOTE: Public access blocked by org policy - use Internal ALB above
+# NOTE: Public access blocked by org policy - use Internal ALB managed by admin
 # ==============================================================================
-# Access must be granted through:
-#   1. Internal Application Load Balancer (configured above)
-#   2. IAP (Identity-Aware Proxy) for authenticated users
+# Access is provided through:
+#   1. Internal Application Load Balancer (admin-managed, IP: 10.150.0.2)
+#   2. Private Service Connect (mra-psc-attachment)
 #   3. Jumpbox for curl/API testing
 
 # ==============================================================================
@@ -367,12 +298,18 @@ output "gcs_bucket_name" {
   value       = data.google_storage_bucket.media_bucket.name
 }
 
+# Internal LB is admin-managed - static values from admin deployment
 output "internal_lb_ip" {
-  description = "The internal IP address of the Load Balancer"
-  value       = google_compute_forwarding_rule.mra_forwarding_rule.ip_address
+  description = "The internal IP address of the Load Balancer (admin-managed)"
+  value       = "10.150.0.2"
 }
 
 output "ssl_certificate_name" {
-  description = "The name of the DoD PKI SSL certificate"
-  value       = data.google_certificate_manager_certificate.dod_cert.name
+  description = "The name of the DoD PKI SSL certificate (admin-managed)"
+  value       = "mra-fisheries-noaa-gov-05272026"
+}
+
+output "psc_attachment_name" {
+  description = "The Private Service Connect attachment (admin-managed)"
+  value       = "mra-psc-attachment"
 }
