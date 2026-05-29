@@ -359,8 +359,43 @@ gcloud compute firewall-rules list \
 | Check status | `gcloud compute instances describe mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --format="value(status)"` |
 | **Browse app (local)** | `gcloud run services proxy nmfs-mra-app --region=us-west2 --project=ggn-nmfs-wcrmmrapp-dev-1 --port=9999` then open `http://127.0.0.1:9999` |
 | **Test via jumpbox** | `TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=https://nmfs-mra-app-ibkcsx465a-wl.a.run.app" -H "Metadata-Flavor: Google") && curl -H "Authorization: Bearer $TOKEN" https://nmfs-mra-app-ibkcsx465a-wl.a.run.app` |
+| **Local DB via IAP tunnel** | `gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap --ssh-flag="-L" --ssh-flag="5432:10.98.17.3:5432" --ssh-flag="-N"` |
+
+---
+
+## Local Development with Private Cloud SQL
+
+Since the Cloud SQL instance (`nmfs-mra-db-west2`) only has a private IP (`10.98.17.3`) and no public IP, the standard Cloud SQL Auth Proxy will NOT work from your local machine. Instead, use an IAP SSH tunnel through the jumpbox.
+
+### Setup Steps
+
+1. **Start the IAP Tunnel** (in a separate terminal - keep it running):
+   ```powershell
+   gcloud compute ssh mra-jumpbox --zone=us-west2-a --project=ggn-nmfs-wcrmmrapp-dev-1 --tunnel-through-iap --ssh-flag="-L" --ssh-flag="5432:10.98.17.3:5432" --ssh-flag="-N"
+   ```
+   
+2. **Verify the tunnel is listening**:
+   ```powershell
+   netstat -an | findstr ":5432"
+   # Should show: TCP 127.0.0.1:5432 ... LISTENING
+   ```
+
+3. **Test the database connection**:
+   ```powershell
+   node -e "const { Pool } = require('pg'); const pool = new Pool({ connectionString: 'postgresql://app_user:YOUR_PASSWORD@127.0.0.1:5432/nmfs-entanglement_db' }); pool.query('SELECT current_database()').then(r => { console.log('Connected to:', r.rows[0].current_database); pool.end(); }).catch(e => { console.error('ERROR:', e.message); pool.end(); });"
+   ```
+
+4. **Start Next.js development server**:
+   ```powershell
+   npm run dev
+   ```
+
+### Important Notes
+- The IAP tunnel must remain open in a separate terminal while developing
+- Your `.env.local` should use `127.0.0.1:5432` as the database host
+- Do NOT use the Cloud SQL Auth Proxy for this database (it requires VPC network access)
 
 ---
 
 *Document created: May 22, 2026*
-*Last updated: May 26, 2026 (Added authenticated testing procedures and browser access options)*
+*Last updated: May 29, 2026 (Added local development via IAP tunnel section)*

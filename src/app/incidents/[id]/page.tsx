@@ -24,8 +24,9 @@ const StatusBadge = ({ status }: { status: IncidentStatus }) => {
     return <Badge variant="outline" className={cn(colorMap[status])}>{status}</Badge>;
 };
 
-export default async function PublicIncidentDetailPage({ params }: { params: { id: string } }) {
-  const incident = await getIncidentFromView(params.id);
+export default async function PublicIncidentDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const incident = await getIncidentFromView(id);
 
   if (!incident || incident.status === 'Deleted') {
     return (
