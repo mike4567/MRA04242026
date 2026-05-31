@@ -2,11 +2,16 @@
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 -- Table for user accounts and role-based access control
+-- Supports NextAuth.js credentials authentication with bcrypt password hashing
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT UNIQUE NOT NULL,
+    password_hash TEXT,
+    name TEXT,
     role TEXT NOT NULL DEFAULT 'USER',
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Table for responder organization contact information
@@ -55,6 +60,22 @@ BEGIN
   ) THEN
     CREATE TRIGGER set_timestamp
     BEFORE UPDATE ON responder_organizations
+    FOR EACH ROW
+    EXECUTE PROCEDURE trigger_set_timestamp();
+  END IF;
+END;
+$$;
+
+-- Create a trigger to automatically update updated_at on users table changes
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'set_timestamp_users' AND tgrelid = 'users'::regclass
+  ) THEN
+    CREATE TRIGGER set_timestamp_users
+    BEFORE UPDATE ON users
     FOR EACH ROW
     EXECUTE PROCEDURE trigger_set_timestamp();
   END IF;

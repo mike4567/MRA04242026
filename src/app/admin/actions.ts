@@ -2,6 +2,7 @@
 
 import { query } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
+import bcrypt from 'bcryptjs';
 
 /**
  * Fetches all unique organization names from the ArcGIS service and
@@ -170,4 +171,284 @@ export async function deleteOrganization(id: number) {
     console.error(`Failed to delete organization ${id}:`, error);
     return { success: false, message: error instanceof Error ? error.message : 'An unknown error occurred.' };
   }
+}
+
+// ============================================================================
+// USER MANAGEMENT ACTIONS
+// ============================================================================
+
+/**
+ * User data interface for CRUD operations.
+ * Represents a user record in the database.
+ */
+export interface UserData {
+    id: string;
+    email: string;
+    name: string | null;
+    role: 'USER' | 'ADMIN';
+    active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+/**
+ * Input interface for creating a new user.
+ * Password will be hashed before storage.
+ */
+export interface CreateUserInput {
+    email: string;
+    password: string;
+    name?: string;
+    role?: 'USER' | 'ADMIN';
+}
+
+/**
+ * Input interface for updating an existing user.
+ * All fields are optional except id.
+ */
+export interface UpdateUserInput {
+    id: string;
+    email?: string;
+    name?: string;
+    role?: 'USER' | 'ADMIN';
+    active?: boolean;
+}
+
+/**
+ * Fetches all users from the database.
+ * Returns users sorted by created_at descending.
+ */
+export async function getUsers(): Promise<{ success: boolean; users?: UserData[]; message?: string }> {
+    try {
+        const result = await query(`
+            SELECT id, email, name, role, active, created_at, updated_at
+            FROM users
+            ORDER BY created_at DESC
+        `);
+
+        const users = result.rows.map(row => ({
+            ...row,
+            created_at: row.created_at?.toISOString() || null,
+            updated_at: row.updated_at?.toISOString() || null,
+        }));
+
+        return { success: true, users };
+    } catch (error) {
+        console.error('Failed to fetch users:', error);
+        return { success: false, message: error instanceof Error ? error.message : 'An unknown error occurred.' };
+    }
+}
+
+/**
+ * Creates a new user with a hashed password.
+ * Uses bcrypt with 12 salt rounds for password hashing.
+ */
+export async function createUser(input: CreateUserInput): Promise<{ success: boolean; user?: UserData; message?: string }> {
+    const { email, password, name, role = 'USER' } = input;
+
+    // Validate required fields
+    if (!email || !password) {
+        return { success: false, message: 'Email and password are required.' };
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return { success: false, message: 'Invalid email format.' };
+    }
+
+    // Validate password strength (minimum 8 characters)
+    if (password.length < 8) {
+        return { success: false, message: 'Password must be at least 8 characters long.' };
+    }
+
+    try {
+        // Hash the password with bcrypt (12 salt rounds for NIST compliance)
+        const passwordHash = await bcrypt.hash(password, 12);
+
+        // Generate a UUID for the user ID
+        const result = await query(`
+            INSERT INTO users (id, email, password_hash, name, role, active, created_at, updated_at)
+            VALUES (gen_random_uuid()::text, $1, $2, $3, $4, true, NOW(), NOW())
+            RETURNING id, email, name, role, active, created_at, updated_at
+        `, [email, passwordHash, name || null, role]);
+
+        if (result.rows.length === 0) {
+            return { success: false, message: 'Failed to create user.' };
+        }
+
+        const user = {
+            ...result.rows[0],
+            created_at: result.rows[0].created_at?.toISOString() || null,
+            updated_at: result.rows[0].updated_at?.toISOString() || null,
+        };
+
+        revalidatePath('/admin/users');
+        return { success: true, user, message: 'User created successfully.' };
+
+    } catch (error: any) {
+        console.error('Failed to create user:', error);
+        
+        // Handle unique constraint violation
+        if (error.code === '23505') {
+            return { success: false, message: 'A user with this email already exists.' };
+        }
+        
+        return { success: false, message: error instanceof Error ? error.message : 'An unknown error occurred.' };
+    }
+}
+
+/**
+ * Updates an existing user's details.
+ * Does not update password - use resetUserPassword for that.
+ */
+export async function updateUser(input: UpdateUserInput): Promise<{ success: boolean; user?: UserData; message?: string }> {
+    const { id, ...fields } = input;
+
+    if (!id) {
+        return { success: false, message: 'User ID is required.' };
+    }
+
+    const fieldEntries = Object.entries(fields).filter(([, value]) => value !== undefined);
+
+    if (fieldEntries.length === 0) {
+        return { success: false, message: 'No fields to update.' };
+    }
+
+    // Build dynamic SET clause
+    const setClause = fieldEntries.map(([key], i) => `${key} = $${i + 2}`).join(', ');
+    const values = fieldEntries.map(([, value]) => value);
+
+    try {
+        const result = await query(`
+            UPDATE users
+            SET ${setClause}, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, email, name, role, active, created_at, updated_at
+        `, [id, ...values]);
+
+        if (result.rows.length === 0) {
+            return { success: false, message: 'User not found.' };
+        }
+
+        const user = {
+            ...result.rows[0],
+            created_at: result.rows[0].created_at?.toISOString() || null,
+            updated_at: result.rows[0].updated_at?.toISOString() || null,
+        };
+
+        revalidatePath('/admin/users');
+        return { success: true, user, message: 'User updated successfully.' };
+
+    } catch (error: any) {
+        console.error(`Failed to update user ${id}:`, error);
+        
+        // Handle unique constraint violation
+        if (error.code === '23505') {
+            return { success: false, message: 'A user with this email already exists.' };
+        }
+        
+        return { success: false, message: error instanceof Error ? error.message : 'An unknown error occurred.' };
+    }
+}
+
+/**
+ * Resets a user's password to a new value.
+ * The new password will be hashed before storage.
+ */
+export async function resetUserPassword(userId: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+    if (!userId) {
+        return { success: false, message: 'User ID is required.' };
+    }
+
+    if (!newPassword || newPassword.length < 8) {
+        return { success: false, message: 'Password must be at least 8 characters long.' };
+    }
+
+    try {
+        // Hash the new password
+        const passwordHash = await bcrypt.hash(newPassword, 12);
+
+        const result = await query(`
+            UPDATE users
+            SET password_hash = $2, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id
+        `, [userId, passwordHash]);
+
+        if (result.rows.length === 0) {
+            return { success: false, message: 'User not found.' };
+        }
+
+        revalidatePath('/admin/users');
+        return { success: true, message: 'Password reset successfully.' };
+
+    } catch (error) {
+        console.error(`Failed to reset password for user ${userId}:`, error);
+        return { success: false, message: error instanceof Error ? error.message : 'An unknown error occurred.' };
+    }
+}
+
+/**
+ * Toggles a user's active status (soft delete/restore).
+ * Deactivated users cannot log in.
+ */
+export async function toggleUserActive(userId: string): Promise<{ success: boolean; active?: boolean; message: string }> {
+    if (!userId) {
+        return { success: false, message: 'User ID is required.' };
+    }
+
+    try {
+        const result = await query(`
+            UPDATE users
+            SET active = NOT active, updated_at = NOW()
+            WHERE id = $1
+            RETURNING id, active
+        `, [userId]);
+
+        if (result.rows.length === 0) {
+            return { success: false, message: 'User not found.' };
+        }
+
+        const newStatus = result.rows[0].active;
+        revalidatePath('/admin/users');
+        return { 
+            success: true, 
+            active: newStatus,
+            message: newStatus ? 'User activated successfully.' : 'User deactivated successfully.' 
+        };
+
+    } catch (error) {
+        console.error(`Failed to toggle active status for user ${userId}:`, error);
+        return { success: false, message: error instanceof Error ? error.message : 'An unknown error occurred.' };
+    }
+}
+
+/**
+ * Permanently deletes a user from the database.
+ * Use toggleUserActive for soft delete instead.
+ */
+export async function deleteUser(userId: string): Promise<{ success: boolean; message: string }> {
+    if (!userId) {
+        return { success: false, message: 'User ID is required.' };
+    }
+
+    try {
+        const result = await query(`
+            DELETE FROM users
+            WHERE id = $1
+            RETURNING id
+        `, [userId]);
+
+        if (result.rows.length === 0) {
+            return { success: false, message: 'User not found.' };
+        }
+
+        revalidatePath('/admin/users');
+        return { success: true, message: 'User deleted permanently.' };
+
+    } catch (error) {
+        console.error(`Failed to delete user ${userId}:`, error);
+        return { success: false, message: error instanceof Error ? error.message : 'An unknown error occurred.' };
+    }
 }

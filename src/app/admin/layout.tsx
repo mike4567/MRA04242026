@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import { EntanglementLogo } from "@/components/EntanglementLogo";
-import { LogOut, Siren } from "lucide-react";
+import { LogOut, Siren, Users, FileText, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -68,7 +68,7 @@ export default function AdminLayout({
                             </Button>
                         </div>
                     </div>
-                    <div className="mt-4">
+                    <div className="mt-4 flex gap-2 flex-wrap">
                         <Link href="/admin">
                             <Button
                                 variant={
@@ -80,6 +80,42 @@ export default function AdminLayout({
                             >
                                 <Siren className="mr-2 h-4 w-4" />
                                 Incidents
+                            </Button>
+                        </Link>
+                        <Link href="/admin/reports">
+                            <Button
+                                variant={
+                                    pathname.startsWith("/admin/reports")
+                                        ? "default"
+                                        : "secondary"
+                                }
+                            >
+                                <FileText className="mr-2 h-4 w-4" />
+                                Reports
+                            </Button>
+                        </Link>
+                        <Link href="/admin/users">
+                            <Button
+                                variant={
+                                    pathname.startsWith("/admin/users")
+                                        ? "default"
+                                        : "secondary"
+                                }
+                            >
+                                <Users className="mr-2 h-4 w-4" />
+                                Users
+                            </Button>
+                        </Link>
+                        <Link href="/admin/configuration">
+                            <Button
+                                variant={
+                                    pathname.startsWith("/admin/configuration")
+                                        ? "default"
+                                        : "secondary"
+                                }
+                            >
+                                <Settings className="mr-2 h-4 w-4" />
+                                Settings
                             </Button>
                         </Link>
                     </div>
