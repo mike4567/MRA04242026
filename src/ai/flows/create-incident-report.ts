@@ -7,6 +7,7 @@ import { Storage } from '@google-cloud/storage';
 import { sendNewIncidentNotification } from '@/services/sms';
 import { generateIncidentId } from '@/lib/utils';
 import { getResponderInfo, type SpecificResponderInfo } from '@/app/actions';
+import { getSystemConfig } from '@/app/admin/configuration/actions';
 import sharp from 'sharp';
 
 // Input Schema
@@ -32,7 +33,6 @@ const CreateIncidentOutputSchema = z.object({
 });
 export type CreateIncidentOutput = z.infer<typeof CreateIncidentOutputSchema>;
 
-// Helper to validate and cast animalType
 // Helper: Reverse Geocoding (Google Maps) - Keeps specific landmarks as a backup
 async function getLandmarkFromCoordinates(lat: number, lng: number): Promise<string> {
   try {
@@ -65,6 +65,13 @@ const createIncidentReportFlow = ai.defineFlow(
     outputSchema: CreateIncidentOutputSchema,
   },
   async (input) => {
+    // --- Step 0: Check Feature Flags ---
+    const [aiEnabled, emailEnabled, smsEnabled] = await Promise.all([
+      getSystemConfig('ai_summary_enabled'),
+      getSystemConfig('email_notifications_enabled'),
+      getSystemConfig('sms_notifications_enabled'),
+    ]);
+
     // --- Step 1: Prepare Location ---
     const locationParts = input.location.split(',').map(s => s.trim());
     const lat = parseFloat(locationParts[0]);
@@ -78,52 +85,58 @@ const createIncidentReportFlow = ai.defineFlow(
         landmarkName = await getLandmarkFromCoordinates(lat, lng);
     }
 
-    // --- Step 2: Prepare AI Prompt with IMAGES ---
-    // UPDATED PROMPT: Instructs AI to derive General Region from Coordinates
-    const promptText = `
-      Role: You are a professional Marine Stranding Coordinator and GIS Expert.
-      
-      Task: Analyze this incident report to produce a concise, 2-4 sentence executive summary.
-      
-      Data to Analyze:
-      - **Coordinates:** ${input.location}
-      - **Nearby Landmark Hint:** ${landmarkName}
-      - **Reporter's Input:** ${input.animalType} (${input.animalLifeStatus})
-      - **Conditions:** ${input.conditions?.join(', ') || 'None listed'}
-      - **Notes:** ${input.detailedDescription || 'None'}
-      
-      Instructions:
-      1. **Location Analysis (General Region):** - Use the Coordinates to identify the **General Coastal Region** (e.g., "North Puget Sound", "Southern California Bight", "Central Oregon Coast", "San Francisco Bay"). 
-         - Combine this with the landmark hint if useful. 
-         - Example: "Located in North Puget Sound near the Edmonds Ferry Terminal."
-      
-      2. **VISUAL VERIFICATION (CRITICAL):** - Look at the attached image(s).
-         - Does the animal in the photo match the Reporter's Input ("${input.animalType}")?
-         - **Visuals Override Text:** If the photo clearly shows a different species (e.g., Sea Lion vs Whale), state the species seen in the photo.
-         - State clearly: "Visual evidence confirms a [Species from Photo]..."
-      
-      3. **Summary:** Combine the visual ID, condition, and the Regional Location into a professional summary.
-    `;
+    // --- Step 2: AI Summary (conditional based on feature flag) ---
+    let summary: string;
 
-    // We build a "Multimodal" message: Text + Images
-    const promptParts: any[] = [{ text: promptText }];
+    if (!aiEnabled) {
+      // AI feature is disabled - skip Gemini API call
+      summary = "Feature Disabled";
+    } else {
+      // --- Prepare AI Prompt with IMAGES ---
+      const promptText = `
+        Role: You are a professional Marine Stranding Coordinator and GIS Expert.
+        
+        Task: Analyze this incident report to produce a concise, 2-4 sentence executive summary.
+        
+        Data to Analyze:
+        - **Coordinates:** ${input.location}
+        - **Nearby Landmark Hint:** ${landmarkName}
+        - **Reporter's Input:** ${input.animalType} (${input.animalLifeStatus})
+        - **Conditions:** ${input.conditions?.join(', ') || 'None listed'}
+        - **Notes:** ${input.detailedDescription || 'None'}
+        
+        Instructions:
+        1. **Location Analysis (General Region):** - Use the Coordinates to identify the **General Coastal Region** (e.g., "North Puget Sound", "Southern California Bight", "Central Oregon Coast", "San Francisco Bay"). 
+           - Combine this with the landmark hint if useful. 
+           - Example: "Located in North Puget Sound near the Edmonds Ferry Terminal."
+        
+        2. **VISUAL VERIFICATION (CRITICAL):** - Look at the attached image(s).
+           - Does the animal in the photo match the Reporter's Input ("${input.animalType}")?
+           - **Visuals Override Text:** If the photo clearly shows a different species (e.g., Sea Lion vs Whale), state the species seen in the photo.
+           - State clearly: "Visual evidence confirms a [Species from Photo]..."
+        
+        3. **Summary:** Combine the visual ID, condition, and the Regional Location into a professional summary.
+      `;
 
-    // If images exist, attach them as "Media Parts" so the AI can see them
-    if (input.mediaDataUris && input.mediaDataUris.length > 0) {
-      input.mediaDataUris.forEach((uri) => {
-        promptParts.push({ media: { url: uri } });
+      // We build a "Multimodal" message: Text + Images
+      const promptParts: any[] = [{ text: promptText }];
+
+      // If images exist, attach them as "Media Parts" so the AI can see them
+      if (input.mediaDataUris && input.mediaDataUris.length > 0) {
+        input.mediaDataUris.forEach((uri) => {
+          promptParts.push({ media: { url: uri } });
+        });
+      }
+
+      // Call the model directly
+      const aiResponse = await ai.generate({
+        model: 'googleai/gemini-2.5-flash-lite',
+        prompt: promptParts,
+        config: { temperature: 0.4 } 
       });
+
+      summary = aiResponse.text || "AI Summary unavailable.";
     }
-
-    // Call the model directly
-    // FIXED: Using 'googleai/gemini-2.5-flash-lite' as requested for best multi-modal results
-    const aiResponse = await ai.generate({
-      model: 'googleai/gemini-2.5-flash-lite',
-      prompt: promptParts,
-      config: { temperature: 0.4 } 
-    });
-
-    const summary = aiResponse.text || "AI Summary unavailable.";
 
     // --- Step 3: Sanitize, Validate, and Upload Media ---
     let uploadedMediaUrls: string[] = [];
@@ -151,10 +164,10 @@ const createIncidentReportFlow = ai.defineFlow(
 
         try {
           if (mimeType.startsWith('image/')) {
-            // Sanitize Image
+            // Sanitize Image - strip EXIF and convert to webp
             processedBuffer = await sharp(originalBuffer)
-              .withMetadata(false) // Strip EXIF
-              .webp({ quality: 85 }) // Convert to webp and compress
+              .withMetadata({})
+              .webp({ quality: 85 })
               .toBuffer();
             finalMimeType = 'image/webp';
             finalFileExtension = 'webp';
@@ -182,7 +195,7 @@ const createIncidentReportFlow = ai.defineFlow(
           await file.save(processedBuffer, {
             metadata: {
               contentType: finalMimeType,
-              contentDisposition: 'inline', // Prevent browser from executing the file
+              contentDisposition: 'inline',
             },
           });
           
@@ -190,8 +203,6 @@ const createIncidentReportFlow = ai.defineFlow(
 
         } catch (error) {
           console.error(`Failed to process file at index ${index}:`, error);
-          // In a real app, you might want more robust error handling,
-          // like notifying the user that a specific file failed.
           return null; 
         }
       });
@@ -238,14 +249,18 @@ const createIncidentReportFlow = ai.defineFlow(
       throw new Error("Failed to save incident to database.");
     }
 
-    // --- Step 5: Notifications ---
+    // --- Step 5: Notifications (conditional based on feature flags) ---
     await sendNewIncidentNotification(
       incidentId, 
       input.location, 
       summary,
       {
-        smsNumbers: responderInfo?.sms_numbers,
-        email: responderInfo?.emails && responderInfo.emails.length > 0 ? responderInfo.emails[0] : null
+        // Only include SMS numbers if SMS notifications are enabled
+        smsNumbers: smsEnabled ? responderInfo?.sms_numbers : undefined,
+        // Only include email if email notifications are enabled
+        email: emailEnabled && responderInfo?.emails && responderInfo.emails.length > 0 
+          ? responderInfo.emails[0] 
+          : null
       },
       input.reporterName,
       input.reporterPhone,
