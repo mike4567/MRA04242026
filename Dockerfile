@@ -5,6 +5,9 @@
 # 1. Base image - Debian slim has better native module compatibility
 FROM node:20-slim AS base
 
+# Apply available Debian security patches
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # 2. Dependencies
 FROM base AS deps
 WORKDIR /app
