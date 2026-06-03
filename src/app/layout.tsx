@@ -8,6 +8,7 @@ import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/toaster";
 import { Header } from "@/components/Header";
+import { Footer } from "@/components/Footer";
 import { IncidentProvider } from "@/context/IncidentContext";
 import { NoticeModal } from "@/components/NoticeModal";
 import { SessionProvider } from "@/components/providers/SessionProvider";
@@ -62,6 +63,7 @@ export default function RootLayout({
                         <main className="container mx-auto px-4 py-8 print:py-0 print:px-2">
                             {children}
                         </main>
+                        <Footer className="print:hidden" />
                         <Toaster />
                     </IncidentProvider>
                 </SessionProvider>
