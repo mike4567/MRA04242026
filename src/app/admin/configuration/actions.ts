@@ -15,9 +15,14 @@ const VALID_CONFIG_KEYS = [
     "ai_summary_enabled",
     "email_notifications_enabled",
     "sms_notifications_enabled",
+    "site_status",
 ] as const;
 
 export type ConfigKey = (typeof VALID_CONFIG_KEYS)[number];
+
+// Site status type for launch toggle
+export type SiteStatus = "live" | "coming_soon" | "maintenance";
+const VALID_SITE_STATUSES: SiteStatus[] = ["live", "coming_soon", "maintenance"];
 
 /**
  * Get a single system configuration value by key.
@@ -60,25 +65,31 @@ export async function getSystemConfig(key: ConfigKey): Promise<boolean> {
     }
 }
 
+// Type for boolean-only config keys (excludes site_status)
+export type BooleanConfigKey = Exclude<ConfigKey, "site_status">;
+
 /**
- * Get all system configuration values.
- * Returns an object with all config keys and their boolean values.
+ * Get all system configuration values (boolean configs only).
+ * Returns an object with all boolean config keys and their values.
  */
-export async function getAllSystemConfigs(): Promise<Record<ConfigKey, boolean>> {
-    const configs: Record<ConfigKey, boolean> = {
+export async function getAllSystemConfigs(): Promise<Record<BooleanConfigKey, boolean>> {
+    const configs: Record<BooleanConfigKey, boolean> = {
         ai_summary_enabled: true,
         email_notifications_enabled: true,
         sms_notifications_enabled: true,
     };
 
+    // Only query boolean config keys
+    const booleanKeys = ["ai_summary_enabled", "email_notifications_enabled", "sms_notifications_enabled"];
+    
     try {
         const result = await query(
             "SELECT key, value FROM system_config WHERE key = ANY($1)",
-            [VALID_CONFIG_KEYS]
+            [booleanKeys]
         );
 
         for (const row of result.rows) {
-            const key = row.key as ConfigKey;
+            const key = row.key as BooleanConfigKey;
             const value = row.value;
 
             if (typeof value === "boolean") {
@@ -95,6 +106,75 @@ export async function getAllSystemConfigs(): Promise<Record<ConfigKey, boolean>>
     }
 
     return configs;
+}
+
+/**
+ * Get the current site status for launch toggle.
+ * Returns 'coming_soon' as default if not set.
+ */
+export async function getSiteStatus(): Promise<SiteStatus> {
+    try {
+        const result = await query(
+            "SELECT value FROM system_config WHERE key = $1",
+            ["site_status"]
+        );
+
+        if (result.rows.length === 0) {
+            // Key doesn't exist, return default
+            return "coming_soon";
+        }
+
+        // JSONB stores strings with quotes, extract the actual value
+        let value = result.rows[0].value;
+        
+        // Handle JSONB string values (may be stored as "\"coming_soon\"")
+        if (typeof value === "string") {
+            // Remove extra quotes if present
+            value = value.replace(/^"|"$/g, "");
+        }
+
+        // Validate the status value
+        if (VALID_SITE_STATUSES.includes(value as SiteStatus)) {
+            return value as SiteStatus;
+        }
+
+        console.warn(`Invalid site_status value in database: ${value}, defaulting to coming_soon`);
+        return "coming_soon";
+    } catch (error) {
+        console.error("Error fetching site_status:", error);
+        return "coming_soon"; // Default on error
+    }
+}
+
+/**
+ * Set the site status for launch toggle.
+ * Validates the status before saving.
+ */
+export async function setSiteStatus(
+    status: SiteStatus
+): Promise<{ success: boolean; error?: string }> {
+    // Validate status value
+    if (!VALID_SITE_STATUSES.includes(status)) {
+        return { success: false, error: `Invalid site status: ${status}` };
+    }
+
+    try {
+        await query(
+            `INSERT INTO system_config (key, value) 
+             VALUES ($1, $2::jsonb) 
+             ON CONFLICT (key) DO UPDATE SET value = $2::jsonb`,
+            ["site_status", JSON.stringify(status)]
+        );
+
+        // Revalidate relevant pages
+        revalidatePath("/admin/configuration");
+        revalidatePath("/");
+
+        return { success: true };
+    } catch (error) {
+        console.error("Error setting site_status:", error);
+        return { success: false, error: "Failed to save site status" };
+    }
 }
 
 /**

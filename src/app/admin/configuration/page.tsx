@@ -4,20 +4,35 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { OrganizationsDataTable } from './_components/organizations-data-table';
 import { FeatureToggles } from './_components/feature-toggles';
-import { getAllSystemConfigs } from './actions';
+import { SiteStatusToggle } from './_components/site-status-toggle';
+import { getAllSystemConfigs, getSiteStatus } from './actions';
 import { ChevronDown } from 'lucide-react';
 
 export const revalidate = 0; // Don't cache this page
 
 export default async function AdminConfigurationPage() {
     // Fetch data in parallel for better performance
-    const [organizations, systemConfigs] = await Promise.all([
+    const [organizations, systemConfigs, siteStatus] = await Promise.all([
         getOrganizations(),
         getAllSystemConfigs(),
+        getSiteStatus(),
     ]);
 
     return (
         <div className="space-y-6">
+            {/* Site Status Card - Launch Toggle */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>Site Launch Control</CardTitle>
+                    <CardDescription>
+                        Control the public-facing state of the application. Changes take effect immediately.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <SiteStatusToggle initialStatus={siteStatus} />
+                </CardContent>
+            </Card>
+
             {/* Feature Toggles Card */}
             <Card>
                 <CardHeader>
