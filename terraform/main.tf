@@ -255,7 +255,9 @@ resource "google_cloud_run_service" "app" {
 # via platform Terraform on May 27, 2026. DO NOT create these resources here.
 #
 # ADMIN-CREATED RESOURCES:
-#   - Certificate: mra-fisheries-noaa-gov-05272026 (expires 2029-05-26)
+#   - Certificate: marineresponse-fisheries-noaa-gov (expires 2029-06-02)
+#     * Updated June 3, 2026 from mra-fisheries-noaa-gov-05272026
+#     * Domain: marineresponse.fisheries.noaa.gov
 #   - Backend Service: mra-backend → nmfs-mra-neg
 #   - URL Map: mra-lb-url-map
 #   - HTTPS Proxy: mra-lb-https-proxy
@@ -306,7 +308,7 @@ output "internal_lb_ip" {
 
 output "ssl_certificate_name" {
   description = "The name of the DoD PKI SSL certificate (admin-managed)"
-  value       = "mra-fisheries-noaa-gov-05272026"
+  value       = "marineresponse-fisheries-noaa-gov"
 }
 
 output "psc_attachment_name" {

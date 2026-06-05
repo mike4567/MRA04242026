@@ -10,11 +10,11 @@ import { useState, useTransition } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { setSystemConfig, type ConfigKey } from "../actions";
+import { setSystemConfig, type BooleanConfigKey } from "../actions";
 import { Bot, Mail, MessageSquare, Loader2 } from "lucide-react";
 
 interface FeatureToggleProps {
-    configKey: ConfigKey;
+    configKey: BooleanConfigKey;
     label: string;
     description: string;
     icon: React.ReactNode;
@@ -85,7 +85,7 @@ function FeatureToggle({
 }
 
 interface FeatureTogglesProps {
-    initialConfigs: Record<ConfigKey, boolean>;
+    initialConfigs: Record<BooleanConfigKey, boolean>;
 }
 
 export function FeatureToggles({ initialConfigs }: FeatureTogglesProps) {
