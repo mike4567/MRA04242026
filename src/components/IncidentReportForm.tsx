@@ -3,7 +3,7 @@
 import { useState, useRef, ChangeEvent, useMemo, useEffect, KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { createIncidentReport, type CreateIncidentOutput } from '@/ai/flows/create-incident-report';
-import { getRecentActiveIncidents, addInfoToIncident, type RecentIncident } from '@/app/actions';
+import { getRecentActiveIncidents, addInfoToIncident, getResponderInfo, type RecentIncident, type SpecificResponderInfo } from '@/app/actions';
 import { useIncident } from '@/context/IncidentContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -19,6 +19,7 @@ import { InteractiveMap } from './InteractiveMap';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Textarea } from './ui/textarea';
 import { RadioGroup, RadioGroupItem } from './ui/radio-group';
+import { ResponderNetworkCard } from './ResponderNetworkCard';
 
 
 interface MediaFile {
@@ -67,6 +68,10 @@ export default function IncidentReportForm({ apiKey }: IncidentReportFormProps) 
   const [formMode, setFormMode] = useState<'new' | 'append'>('new');
   const [showExistingIncidentDialog, setShowExistingIncidentDialog] = useState(false);
 
+  // State for dynamic responder identification (Section 5)
+  const [responderLookupState, setResponderLookupState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [previewResponder, setPreviewResponder] = useState<SpecificResponderInfo | null>(null);
+
   useEffect(() => {
     // Fetch recent incidents when the component mounts
     const fetchRecentIncidents = async () => {
@@ -91,6 +96,42 @@ export default function IncidentReportForm({ apiKey }: IncidentReportFormProps) 
       setMapCenter(position);
     }
   }, [position]);
+
+  // Dynamic responder lookup - triggers when location string or animalLifeStatus changes
+  // Using location string directly instead of position object ensures every change triggers a new lookup
+  useEffect(() => {
+    // Parse position directly in the effect to avoid reference comparison issues
+    const parsedPosition = (() => {
+      if (!location) return null;
+      const parts = location.split(',').map(s => s.trim());
+      if (parts.length !== 2) return null;
+      const lat = parseFloat(parts[0]);
+      const lng = parseFloat(parts[1]);
+      if (isNaN(lat) || isNaN(lng)) return null;
+      return { lat, lng };
+    })();
+
+    // Only perform lookup in 'new' form mode with valid position and life status
+    if (parsedPosition && animalLifeStatus && formMode === 'new') {
+      setResponderLookupState('loading');
+      setPreviewResponder(null);
+      
+      // Call the server action to fetch responder info
+      getResponderInfo(parsedPosition.lat, parsedPosition.lng, animalLifeStatus, selectedAnimalType || undefined)
+        .then((info) => {
+          setPreviewResponder(info);
+          setResponderLookupState(info ? 'success' : 'error');
+        })
+        .catch((error) => {
+          console.error('Responder lookup failed:', error);
+          setResponderLookupState('error');
+        });
+    } else if (!parsedPosition || !animalLifeStatus) {
+      // Reset to idle if required fields are cleared
+      setResponderLookupState('idle');
+      setPreviewResponder(null);
+    }
+  }, [location, animalLifeStatus, selectedAnimalType, formMode]);
 
   const handleRecentIncidentClick = (incident: RecentIncident) => {
     setSelectedIncident(incident);
@@ -257,6 +298,7 @@ export default function IncidentReportForm({ apiKey }: IncidentReportFormProps) 
       } else {
         const mediaDataUris = await Promise.all(mediaFiles.map(mf => fileToDataUri(mf.file)));
 
+        // Build incident input - animalLifeStatus is guaranteed non-null here due to validation above
         const incidentInput = {
           mediaDataUris: mediaDataUris.length > 0 ? mediaDataUris : undefined,
           location: location,
@@ -264,8 +306,8 @@ export default function IncidentReportForm({ apiKey }: IncidentReportFormProps) 
           reporterName: reporterName || undefined,
           reporterPhone: reporterPhone || undefined,
           canText: canText,
-          animalType: selectedAnimalType,
-          animalLifeStatus: animalLifeStatus,
+          animalType: selectedAnimalType || undefined,
+          animalLifeStatus: animalLifeStatus as 'alive' | 'dead',
           conditions: selectedConditions.length > 0 ? selectedConditions : undefined,
           detailedDescription: detailedDescription || undefined,
         };
@@ -523,6 +565,15 @@ export default function IncidentReportForm({ apiKey }: IncidentReportFormProps) 
               </div>
             </div>
           </div>
+
+          {/* Section 5: Responder Identification - displays dynamically when location + animal status are set */}
+          {formMode === 'new' && responderLookupState !== 'idle' && (
+            <ResponderNetworkCard 
+              responder={previewResponder}
+              isLoading={responderLookupState === 'loading'}
+              showTitle={true}
+            />
+          )}
           
           <div>
             <Button

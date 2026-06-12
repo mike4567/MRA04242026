@@ -7,6 +7,8 @@ export interface SpecificResponderInfo {
   emails: string[] | null;
   sms_numbers: string[] | null;
   hotline: string | null;
+  address: string | null;
+  website: string | null;
   ai_summary_enabled: boolean;
 }
 
@@ -191,7 +193,7 @@ export async function getResponderInfo(
       if (determinedOrg) {
         try {
           const orgResult = await query(
-            'SELECT name, emails, sms_numbers, hotline FROM responder_organizations WHERE name ILIKE $1',
+            'SELECT name, emails, sms_numbers, hotline, address, website FROM responder_organizations WHERE name ILIKE $1',
             [determinedOrg]
           );
 
@@ -202,6 +204,8 @@ export async function getResponderInfo(
               emails: orgData.emails,
               sms_numbers: orgData.sms_numbers,
               hotline: orgData.hotline,
+              address: orgData.address,
+              website: orgData.website,
               ai_summary_enabled: aiSummaryEnabled,
             };
           } else {
@@ -219,6 +223,8 @@ export async function getResponderInfo(
         emails: null, // No email for the general hotline
         sms_numbers: null, // No SMS for the general hotline
         hotline: '1-866-755-6622',
+        address: null,
+        website: 'https://www.fisheries.noaa.gov/report',
         ai_summary_enabled: aiSummaryEnabled,
       };
       
@@ -230,6 +236,8 @@ export async function getResponderInfo(
         emails: null,
         sms_numbers: null,
         hotline: '1-866-755-6622',
+        address: null,
+        website: 'https://www.fisheries.noaa.gov/report',
         ai_summary_enabled: aiSummaryEnabled,
       };
     }
@@ -241,6 +249,8 @@ export async function getResponderInfo(
       emails: null,
       sms_numbers: null,
       hotline: '1-866-755-6622',
+      address: null,
+      website: 'https://www.fisheries.noaa.gov/report',
       ai_summary_enabled: false, // Safer default
     };
   }

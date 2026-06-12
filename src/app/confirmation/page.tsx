@@ -6,8 +6,9 @@ import { useRouter } from 'next/navigation';
 import { useIncident } from '@/context/IncidentContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { AlertTriangle, CheckCircle, Printer, Fingerprint, Phone, Building, Eye } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Printer, Fingerprint, Eye } from 'lucide-react';
 import Link from 'next/link';
+import { ResponderNetworkCard } from '@/components/ResponderNetworkCard';
 
 export default function ConfirmationPage() {
   const router = useRouter();
@@ -61,29 +62,12 @@ export default function ConfirmationPage() {
             <p className="text-sm text-muted-foreground">Please keep this ID for your records.</p>
           </div>
 
-          {responderInfoForConfirmation?.selectedOrg && (
-            <div className="rounded-lg border p-6 space-y-4 text-left">
-              <h3 className="font-semibold text-lg">Assigned Responder</h3>
-              <p className="text-sm text-muted-foreground">
-                Based on the location and status you provided, the following regional coordinator has been notified.
-              </p>
-              <div className="space-y-3">
-                <div className="flex items-start gap-3">
-                  <Building className="h-5 w-5 text-primary mt-1 flex-shrink-0" />
-                  <div>
-                    <p className="font-medium">{responderInfoForConfirmation.selectedOrg}</p>
-                  </div>
-                </div>
-                {responderInfoForConfirmation.selectedPhone && (
-                  <div className="flex items-center gap-3">
-                    <Phone className="h-5 w-5 text-primary flex-shrink-0" />
-                    <a href={`tel:${responderInfoForConfirmation.selectedPhone}`} className="font-medium text-primary hover:underline">
-                      {responderInfoForConfirmation.selectedPhone}
-                    </a>
-                  </div>
-                )}
-              </div>
-            </div>
+          {/* Responder Contact Information - using the reusable card component */}
+          {responderInfoForConfirmation && (
+            <ResponderNetworkCard 
+              responder={responderInfoForConfirmation}
+              showTitle={false}
+            />
           )}
 
           <div className="flex flex-wrap justify-center items-center gap-4 pt-4 print:hidden">
