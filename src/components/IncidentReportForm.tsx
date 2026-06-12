@@ -36,9 +36,12 @@ const animalConditions = ["Entangled (in net, line, or gear)", "Stranded (on bea
 
 interface IncidentReportFormProps {
   apiKey: string;
+  // Controls visibility of the "5. Responder Network" section
+  // When true, shows full responder info; when false, hides the entire section
+  showResponderInfo: boolean;
 }
 
-export default function IncidentReportForm({ apiKey }: IncidentReportFormProps) {
+export default function IncidentReportForm({ apiKey, showResponderInfo }: IncidentReportFormProps) {
   const router = useRouter();
   const { setIncidentDataForConfirmation } = useIncident();
   const { toast } = useToast();
@@ -567,11 +570,13 @@ export default function IncidentReportForm({ apiKey }: IncidentReportFormProps) 
           </div>
 
           {/* Section 5: Responder Identification - displays dynamically when location + animal status are set */}
-          {formMode === 'new' && responderLookupState !== 'idle' && (
+          {/* Visibility controlled by show_responder_info database setting - when false, entire section is hidden */}
+          {showResponderInfo && formMode === 'new' && responderLookupState !== 'idle' && (
             <ResponderNetworkCard 
               responder={previewResponder}
               isLoading={responderLookupState === 'loading'}
               showTitle={true}
+              variant="full"
             />
           )}
           

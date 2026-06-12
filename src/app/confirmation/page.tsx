@@ -63,10 +63,12 @@ export default function ConfirmationPage() {
           </div>
 
           {/* Responder Contact Information - using the reusable card component */}
+          {/* IMPORTANT: variant="public" is hardcoded to mask SMS/emails - do not change */}
           {responderInfoForConfirmation && (
             <ResponderNetworkCard 
               responder={responderInfoForConfirmation}
               showTitle={false}
+              variant="public"
             />
           )}
 

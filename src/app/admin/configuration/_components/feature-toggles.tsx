@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { setSystemConfig, type BooleanConfigKey } from "../actions";
-import { Bot, Mail, MessageSquare, Loader2 } from "lucide-react";
+import { Bot, Mail, MessageSquare, Loader2, Building2 } from "lucide-react";
 
 interface FeatureToggleProps {
     configKey: BooleanConfigKey;
@@ -113,6 +113,14 @@ export function FeatureToggles({ initialConfigs }: FeatureTogglesProps) {
                 description="Send SMS text alerts to responder organizations when incidents are created or updated."
                 icon={<MessageSquare className="h-5 w-5" />}
                 initialValue={initialConfigs.sms_notifications_enabled}
+            />
+
+            <FeatureToggle
+                configKey="show_responder_info"
+                label="Show Responder Info on Report Form"
+                description="Display the assigned responder organization's contact information on the /report page before submission. The confirmation page always shows limited responder info regardless of this setting."
+                icon={<Building2 className="h-5 w-5" />}
+                initialValue={initialConfigs.show_responder_info}
             />
         </div>
     );

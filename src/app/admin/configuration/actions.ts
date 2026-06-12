@@ -15,6 +15,7 @@ const VALID_CONFIG_KEYS = [
     "ai_summary_enabled",
     "email_notifications_enabled",
     "sms_notifications_enabled",
+    "show_responder_info",
     "site_status",
 ] as const;
 
@@ -77,10 +78,11 @@ export async function getAllSystemConfigs(): Promise<Record<BooleanConfigKey, bo
         ai_summary_enabled: true,
         email_notifications_enabled: true,
         sms_notifications_enabled: true,
+        show_responder_info: true,
     };
 
     // Only query boolean config keys
-    const booleanKeys = ["ai_summary_enabled", "email_notifications_enabled", "sms_notifications_enabled"];
+    const booleanKeys = ["ai_summary_enabled", "email_notifications_enabled", "sms_notifications_enabled", "show_responder_info"];
     
     try {
         const result = await query(

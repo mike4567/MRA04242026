@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
+import { IncidentLocationMap } from '@/components/IncidentLocationMap';
 
 
 export default function IncidentDetailPage() {
@@ -110,63 +111,67 @@ export default function IncidentDetailPage() {
         <div className="lg:col-span-2 space-y-6">
             <Card>
                 <CardHeader>
-                    <CardTitle>Incident #{incident.id}</CardTitle>
-                     <CardDescription className="flex flex-col gap-2 text-sm">
-                        <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4" /> {format(new Date(incident.reportedAt), 'PPP p')}</span>
-                        <div className="flex items-start gap-1.5">
-                            <MapPin className="h-4 w-4 mt-0.5 shrink-0" /> 
-                            <div>
-                                <a href={`https://www.google.com/maps?q=${incident.location}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
-                                    <p>{incident.location}</p>
-                                </a>
-                                {incident.additionalLocationInfo && (
-                                    <p className="text-muted-foreground italic mt-1">"{incident.additionalLocationInfo}"</p>
-                                )}
-                            </div>
-                        </div>
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                    {(incident.animalType || (incident.conditions && incident.conditions.length > 0)) && (
-                        <div>
-                            <h3 className="font-semibold text-lg mb-2">Submitted Details</h3>
-                            <div className="flex flex-wrap items-center gap-4">
-                                {incident.animalType && (
-                                    <div className="flex items-center gap-2">
-                                        <Tag className="h-4 w-4 text-muted-foreground" />
-                                        <div>
-                                            <p className="text-sm text-muted-foreground">Animal Type</p>
-                                            <p className="font-medium">{incident.animalType}</p>
-                                        </div>
+                    {/* Flexbox row: Left side has text metadata, Right side has static map */}
+                    <div className="flex flex-col lg:flex-row justify-between items-start gap-4">
+                        {/* Left side: Incident ID, date, coordinates, and submitted details */}
+                        <div className="flex-1">
+                            <CardTitle>Incident #{incident.id}</CardTitle>
+                            <CardDescription className="flex flex-col gap-2 text-sm mt-2">
+                                <span className="flex items-center gap-1.5"><Calendar className="h-4 w-4" /> {format(new Date(incident.reportedAt), 'PPP p')}</span>
+                                <div className="flex items-start gap-1.5">
+                                    <MapPin className="h-4 w-4 mt-0.5 shrink-0" /> 
+                                    <div>
+                                        <a href={`https://www.google.com/maps?q=${incident.location}`} target="_blank" rel="noopener noreferrer" className="hover:underline">
+                                            <p>{incident.location}</p>
+                                        </a>
+                                        {incident.additionalLocationInfo && (
+                                            <p className="text-muted-foreground italic mt-1">"{incident.additionalLocationInfo}"</p>
+                                        )}
                                     </div>
-                                )}
-                                {incident.animalLifeStatus && (
-                                    <div className="flex items-center gap-2">
-                                        {incident.animalLifeStatus === 'alive' ? <HeartPulse className="h-4 w-4 text-muted-foreground" /> : <Skull className="h-4 w-4 text-muted-foreground" />}
-                                        <div>
-                                            <p className="text-sm text-muted-foreground">Life Status</p>
-                                            <p className="font-medium capitalize">{incident.animalLifeStatus}</p>
+                                </div>
+                            </CardDescription>
+                            {/* Inline Submitted Details in header */}
+                            {(incident.animalType || incident.animalLifeStatus || (incident.conditions && incident.conditions.length > 0)) && (
+                                <div className="flex flex-wrap items-center gap-4 mt-4 text-sm">
+                                    {incident.animalType && (
+                                        <div className="flex items-center gap-1.5">
+                                            <Tag className="h-4 w-4 text-muted-foreground" />
+                                            <span className="font-medium">{incident.animalType}</span>
                                         </div>
-                                    </div>
-                                )}
-                                {incident.conditions && incident.conditions.length > 0 && (
-                                     <div className="flex items-center gap-2">
-                                        <CheckSquare className="h-4 w-4 text-muted-foreground" />
-                                        <div>
-                                            <p className="text-sm text-muted-foreground">Conditions</p>
+                                    )}
+                                    {incident.animalLifeStatus && (
+                                        <div className="flex items-center gap-1.5">
+                                            {incident.animalLifeStatus === 'alive' ? <HeartPulse className="h-4 w-4 text-muted-foreground" /> : <Skull className="h-4 w-4 text-muted-foreground" />}
+                                            <span className="font-medium capitalize">{incident.animalLifeStatus}</span>
+                                        </div>
+                                    )}
+                                    {incident.conditions && incident.conditions.length > 0 && (
+                                        <div className="flex items-center gap-1.5">
+                                            <CheckSquare className="h-4 w-4 text-muted-foreground" />
                                             <div className="flex flex-wrap gap-1">
-                                                {incident.conditions.map(c => <Badge key={c} variant="secondary">{c}</Badge>)}
+                                                {incident.conditions.map(c => <Badge key={c} variant="secondary" className="text-xs">{c}</Badge>)}
                                             </div>
                                         </div>
-                                    </div>
-                                )}
-                            </div>
-                             {incident.detailedDescription && (
-                                <div className="mt-4">
-                                    <h4 className="font-medium text-sm text-muted-foreground mb-1">Reporter's Detailed Description</h4>
-                                    <p className="text-muted-foreground bg-secondary/50 p-3 rounded-md border text-sm italic">"{incident.detailedDescription}"</p>
+                                    )}
                                 </div>
                             )}
+                        </div>
+                        {/* Right side: Static map image */}
+                        <div className="shrink-0 self-start">
+                            <IncidentLocationMap 
+                                location={incident.location} 
+                                width={280} 
+                                height={160} 
+                            />
+                        </div>
+                    </div>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    {/* Reporter's Detailed Description - moved out of Submitted Details block */}
+                    {incident.detailedDescription && (
+                        <div>
+                            <h4 className="font-medium text-sm text-muted-foreground mb-1">Reporter's Detailed Description</h4>
+                            <p className="text-muted-foreground bg-secondary/50 p-3 rounded-md border text-sm italic">"{incident.detailedDescription}"</p>
                         </div>
                     )}
                     <div>
