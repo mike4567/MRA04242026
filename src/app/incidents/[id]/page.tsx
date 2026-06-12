@@ -10,6 +10,7 @@ import Image from 'next/image';
 import type { IncidentStatus } from '@/lib/types';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { IncidentLocationMap } from '@/components/IncidentLocationMap';
 
 // Status Badge Component (reused for consistency)
 const StatusBadge = ({ status }: { status: IncidentStatus }) => {
@@ -53,8 +54,10 @@ export default async function PublicIncidentDetailPage({ params }: { params: Pro
       <Card>
         <CardHeader>
             <CardDescription>Incident ID: {incident.id}</CardDescription>
-          <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-            <div>
+          {/* Flexbox row: Left side has text metadata, Right side has static map */}
+          <div className="flex flex-col lg:flex-row justify-between items-start gap-4">
+            {/* Left side: Incident details and status badge */}
+            <div className="flex-1">
                 <CardTitle className="text-2xl flex items-start gap-3">
                     <MapPin className="h-6 w-6 text-muted-foreground shrink-0 mt-1" />
                     <span>
@@ -69,9 +72,17 @@ export default async function PublicIncidentDetailPage({ params }: { params: Pro
               <CardDescription className="flex items-center gap-2 mt-2 ml-9 sm:ml-0">
                 <Calendar className="h-4 w-4" /> Reported on {format(new Date(incident.reportedAt), 'PPP p')}
               </CardDescription>
-            </div>
-            <div className="sm:pl-4 self-start sm:self-center">
+              <div className="mt-3 ml-9 sm:ml-0">
                 <StatusBadge status={incident.status} />
+              </div>
+            </div>
+            {/* Right side: Static map image */}
+            <div className="shrink-0 self-start">
+                <IncidentLocationMap 
+                    location={incident.location} 
+                    width={300} 
+                    height={180} 
+                />
             </div>
           </div>
         </CardHeader>

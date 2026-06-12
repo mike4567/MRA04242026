@@ -6,6 +6,11 @@
  * Used in the incident report form (Section 5: Responder Identification) and the
  * confirmation page to show the assigned responder's contact details.
  * 
+ * Supports two rendering variants:
+ * - "full": Shows ALL contact fields including SMS numbers and emails (for /report page)
+ * - "public": Shows only public-safe fields (Name, Hotline, Website, Address) - hardcoded
+ *             masking for confirmation page that cannot be bypassed by database settings
+ * 
  * NIST SSDF Compliance: PW.1.1 - Produces well-documented software with clear interfaces.
  */
 
@@ -21,18 +26,29 @@ interface ResponderNetworkCardProps {
     showTitle?: boolean;
     // Custom class names for the container
     className?: string;
+    // Rendering variant: "full" shows all fields, "public" masks SMS/email (defaults to "full")
+    variant?: "full" | "public";
 }
 
 /**
  * Displays a responder organization's contact information in a mobile-friendly card layout.
  * Handles loading, error, and success states for responder lookup results.
+ * 
+ * The variant prop controls data masking:
+ * - "full": All fields visible (SMS, emails included) - used on /report when show_responder_info is true
+ * - "public": Hardcoded masking of SMS/emails - used on confirmation page regardless of settings
  */
 export function ResponderNetworkCard({
     responder,
     isLoading = false,
     showTitle = true,
     className = "",
+    variant = "full",
 }: ResponderNetworkCardProps) {
+    // Determine if sensitive contact info (SMS/emails) should be shown
+    // This is hardcoded to false for "public" variant and cannot be overridden
+    const showSensitiveInfo = variant === "full";
+
     // Loading state - show spinner while fetching responder data
     if (isLoading) {
         return (
@@ -123,8 +139,8 @@ export function ResponderNetworkCard({
                     </div>
                 )}
 
-                {/* SMS Numbers */}
-                {responder.sms_numbers && responder.sms_numbers.length > 0 && (
+                {/* SMS Numbers - only shown in "full" variant, hidden in "public" for privacy */}
+                {showSensitiveInfo && responder.sms_numbers && responder.sms_numbers.length > 0 && (
                     <div className="flex items-start gap-3">
                         <MessageSquare className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
                         <div>
@@ -136,8 +152,8 @@ export function ResponderNetworkCard({
                     </div>
                 )}
 
-                {/* Email Addresses */}
-                {responder.emails && responder.emails.length > 0 && (
+                {/* Email Addresses - only shown in "full" variant, hidden in "public" for privacy */}
+                {showSensitiveInfo && responder.emails && responder.emails.length > 0 && (
                     <div className="flex items-start gap-3">
                         <Mail className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
                         <div>
