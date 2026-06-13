@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { IncidentLocationMap } from '@/components/IncidentLocationMap';
+import { EnvironmentalRiskFactors } from '@/components/EnvironmentalRiskFactors';
 
 
 export default function IncidentDetailPage() {
@@ -156,12 +157,12 @@ export default function IncidentDetailPage() {
                                 </div>
                             )}
                         </div>
-                        {/* Right side: Static map image */}
+                        {/* Right side: Interactive map with expand capability */}
                         <div className="shrink-0 self-start">
                             <IncidentLocationMap 
                                 location={incident.location} 
-                                width={280} 
-                                height={160} 
+                                width={420} 
+                                height={320} 
                             />
                         </div>
                     </div>
@@ -214,6 +215,12 @@ export default function IncidentDetailPage() {
                     </div>
                 </CardContent>
             </Card>
+            
+            {/* Environmental Risk Factors Section - NOAA CoastWatch ERDDAP Data */}
+            <EnvironmentalRiskFactors 
+                riskMapUrl={incident.riskMapUrl}
+                riskDataDetails={incident.riskDataDetails}
+            />
         </div>
 
         <div className="lg:col-span-1 space-y-6">
