@@ -8,6 +8,7 @@ import { sendNewIncidentNotification } from '@/services/sms';
 import { generateIncidentId } from '@/lib/utils';
 import { getResponderInfo, type SpecificResponderInfo } from '@/app/actions';
 import { getSystemConfig } from '@/app/admin/configuration/actions';
+import { captureAndStoreEnvironmentalData } from '@/services/erddap';
 import sharp from 'sharp';
 
 // Input Schema
@@ -249,7 +250,16 @@ const createIncidentReportFlow = ai.defineFlow(
       throw new Error("Failed to save incident to database.");
     }
 
-    // --- Step 5: Notifications (conditional based on feature flags) ---
+    // --- Step 5: Environmental Risk Data Capture (Non-Blocking) ---
+    // Fire-and-forget: Capture NOAA CoastWatch ERDDAP data asynchronously
+    // This does NOT block the user response - data is captured in the background
+    if (!isNaN(lat) && !isNaN(lng)) {
+      captureAndStoreEnvironmentalData(incidentId, lat, lng, new Date()).catch(err => {
+        console.error('[ERDDAP] Environmental risk capture failed (non-blocking):', err);
+      });
+    }
+
+    // --- Step 6: Notifications (conditional based on feature flags) ---
     await sendNewIncidentNotification(
       incidentId, 
       input.location, 

@@ -65,7 +65,7 @@ export async function getIncidentFromView(id: string): Promise<PublicIncident | 
 }
 
 export async function getAdminIncidents(): Promise<Incident[]> {
-  // Select EVERYTHING from the main table
+  // Select EVERYTHING from the main table including environmental risk data
   const sql = `SELECT * FROM incidents ORDER BY reported_at DESC`;
   
   try {
@@ -87,7 +87,10 @@ export async function getAdminIncidents(): Promise<Incident[]> {
       conditions: row.conditions || [],
       responderOrg: row.responder_org,
       responderPhone: row.responder_phone,
-      detailedDescription: row.detailed_description
+      detailedDescription: row.detailed_description,
+      // Environmental Risk Data (NOAA CoastWatch ERDDAP)
+      riskMapUrl: row.risk_map_url || null,
+      riskDataDetails: row.risk_data_details || null
     }));
   } catch (e) {
     console.error("Failed to fetch admin incidents", e);
