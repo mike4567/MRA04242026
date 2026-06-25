@@ -107,6 +107,94 @@ resource "google_secret_manager_secret_version" "auth_secret_val" {
 }
 
 # ==============================================================================
+# 6a. SECRETS - GOOGLE_MAPS_API_KEY (Server-side)
+# ==============================================================================
+# Server-side Maps API key for geocoding operations.
+# Using Secret Manager to prevent exposure in Cloud Run revision metadata.
+resource "google_secret_manager_secret" "google_maps_api_key" {
+  secret_id = "GOOGLE_MAPS_API_KEY"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "google_maps_api_key_val" {
+  secret      = google_secret_manager_secret.google_maps_api_key.id
+  secret_data = var.google_maps_api_key
+}
+
+# ==============================================================================
+# 6b. SECRETS - GOOGLE_AI_API_KEY (Gemini)
+# ==============================================================================
+# Google AI (Gemini) API key for AI-powered features.
+# Using Secret Manager to prevent exposure in Cloud Run revision metadata.
+resource "google_secret_manager_secret" "google_ai_api_key" {
+  secret_id = "GOOGLE_AI_API_KEY"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "google_ai_api_key_val" {
+  secret      = google_secret_manager_secret.google_ai_api_key.id
+  secret_data = var.google_ai_api_key
+}
+
+# ==============================================================================
+# 6c. SECRETS - TWILIO_AUTH_TOKEN
+# ==============================================================================
+# Twilio Auth Token for SMS notification services.
+# Using Secret Manager as this is the most sensitive Twilio credential.
+resource "google_secret_manager_secret" "twilio_auth_token" {
+  secret_id = "TWILIO_AUTH_TOKEN"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "twilio_auth_token_val" {
+  secret      = google_secret_manager_secret.twilio_auth_token.id
+  secret_data = var.twilio_auth_token
+}
+
+# ==============================================================================
+# 6d. SECRETS - SENDGRID_API_KEY
+# ==============================================================================
+# SendGrid API key for email notification services.
+# Using Secret Manager to prevent exposure in Cloud Run revision metadata.
+resource "google_secret_manager_secret" "sendgrid_api_key" {
+  secret_id = "SENDGRID_API_KEY"
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
+  }
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "sendgrid_api_key_val" {
+  secret      = google_secret_manager_secret.sendgrid_api_key.id
+  secret_data = var.sendgrid_api_key
+}
+
+# ==============================================================================
 # 7. IAM BINDINGS
 # ==============================================================================
 # NOTE: Project-level IAM bindings removed due to org policy restrictions.
@@ -184,40 +272,68 @@ resource "google_cloud_run_service" "app" {
           value = var.next_public_base_url
         }
         
-        # Google Maps API Key
+        # Google Maps API Key (Server-side) - FROM SECRET MANAGER
+        # Used for server-side geocoding operations
         env {
-          name  = "GOOGLE_MAPS_API_KEY"
-          value = var.google_maps_api_key
-        }
-        env {
-          name  = "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"
-          value = var.google_maps_api_key
+          name = "GOOGLE_MAPS_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.google_maps_api_key.secret_id
+              key  = "latest"
+            }
+          }
         }
         
-        # Google AI (Gemini) API Key
+        # Google Maps API Key (Client-side) - Plain text (required for browser)
+        # This key should have HTTP referrer restrictions configured in GCP Console
         env {
-          name  = "GOOGLE_API_KEY"
-          value = var.google_ai_api_key
+          name  = "NEXT_PUBLIC_GOOGLE_MAPS_API_KEY"
+          value = var.google_maps_api_key_client
+        }
+        
+        # Google AI (Gemini) API Key - FROM SECRET MANAGER
+        # Used for AI-powered incident summarization and location details
+        env {
+          name = "GOOGLE_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.google_ai_api_key.secret_id
+              key  = "latest"
+            }
+          }
         }
         
         # Twilio Configuration
+        # Account SID is not sensitive (like a username)
         env {
           name  = "TWILIO_ACCOUNT_SID"
           value = var.twilio_account_sid
         }
+        # Auth Token - FROM SECRET MANAGER (highly sensitive)
         env {
-          name  = "TWILIO_AUTH_TOKEN"
-          value = var.twilio_auth_token
+          name = "TWILIO_AUTH_TOKEN"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.twilio_auth_token.secret_id
+              key  = "latest"
+            }
+          }
         }
         env {
           name  = "TWILIO_MESSAGING_SERVICE_SID"
           value = var.twilio_messaging_service_sid
         }
         
-        # SendGrid Configuration
+        # SendGrid API Key - FROM SECRET MANAGER
+        # Used for email notification services
         env {
-          name  = "SENDGRID_API_KEY"
-          value = var.sendgrid_api_key
+          name = "SENDGRID_API_KEY"
+          value_from {
+            secret_key_ref {
+              name = google_secret_manager_secret.sendgrid_api_key.secret_id
+              key  = "latest"
+            }
+          }
         }
         
         # Application Base URL
@@ -244,7 +360,11 @@ resource "google_cloud_run_service" "app" {
   depends_on = [
     google_project_service.apis,
     google_secret_manager_secret_version.db_url_val,
-    google_secret_manager_secret_version.auth_secret_val
+    google_secret_manager_secret_version.auth_secret_val,
+    google_secret_manager_secret_version.google_maps_api_key_val,
+    google_secret_manager_secret_version.google_ai_api_key_val,
+    google_secret_manager_secret_version.twilio_auth_token_val,
+    google_secret_manager_secret_version.sendgrid_api_key_val
   ]
 }
 

@@ -1,41 +1,99 @@
-# dependencies
+# ==============================================================================
+# .gitignore - Marine Response Application
+# ==============================================================================
+# SECURITY: This file protects sensitive credentials from being committed.
+# Aligned with NIST SP 800-218 and NAO 201-118 security requirements.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Dependencies
+# ------------------------------------------------------------------------------
 /node_modules
 /.pnp
 .pnp.js
 
-# testing
+# ------------------------------------------------------------------------------
+# Testing
+# ------------------------------------------------------------------------------
 /coverage
 
-# next.js
+# ------------------------------------------------------------------------------
+# Next.js Build Outputs
+# ------------------------------------------------------------------------------
 /.next/
 /out/
 
-# production
+# ------------------------------------------------------------------------------
+# Production Build
+# ------------------------------------------------------------------------------
 /build
 
-# misc
+# ------------------------------------------------------------------------------
+# OS and Editor Files
+# ------------------------------------------------------------------------------
 .DS_Store
+Thumbs.db
 *.pem
 
-# debug
+# ------------------------------------------------------------------------------
+# Debug Logs
+# ------------------------------------------------------------------------------
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
+logs/
 
-# local env files
-.env*.local
+# ==============================================================================
+# SENSITIVE FILES - NEVER COMMIT THESE
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Environment Files (contain API keys, database credentials, secrets)
+# ------------------------------------------------------------------------------
 .env
+.env.local
+.env.development
+.env.development.local
+.env.staging
+.env.staging.local
+.env.production
+.env.production.local
+.env.test
+.env.test.local
+.env*.local
+*.env
 
-# terraform
+# ------------------------------------------------------------------------------
+# Terraform State and Variables (contain infrastructure secrets)
+# ------------------------------------------------------------------------------
 .terraform/
 *.tfstate
 *.tfstate.backup
+*.tfstate.*.backup
+terraform.tfvars
+terraform.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
+terraform/*.tfvars
+terraform/*.auto.tfvars
+crash.log
+crash.*.log
 
-*.tfvars
+# ------------------------------------------------------------------------------
+# GCP Service Account Keys (CRITICAL - NEVER commit these)
+# ------------------------------------------------------------------------------
+*-service-account*.json
+*-credentials*.json
+*-sa-key*.json
+service-account*.json
+gcp-key*.json
+google-credentials*.json
+application_default_credentials.json
 
-/gitignore*
-
-# certificates - NEVER commit private keys or certificates
+# ------------------------------------------------------------------------------
+# Certificates and Private Keys (CRITICAL - NEVER commit these)
+# ------------------------------------------------------------------------------
 certs/
 *.key
 *.csr
@@ -43,6 +101,39 @@ certs/
 *.crt
 *.p12
 *.pfx
+*.pem
 
-# developer documents
+# ------------------------------------------------------------------------------
+# Cloud SQL Proxy
+# ------------------------------------------------------------------------------
+cloud-sql-proxy*
+
+# ------------------------------------------------------------------------------
+# IDE Configuration (may contain run configs with secrets)
+# ------------------------------------------------------------------------------
+.idea/
+.vscode/launch.json
+.vscode/settings.json
+*.sublime-workspace
+
+# ------------------------------------------------------------------------------
+# Firebase/GCP Config Files
+# ------------------------------------------------------------------------------
+firebase-debug.log
+.firebaserc
+firebase-export-*
+
+# ------------------------------------------------------------------------------
+# Backup Files (may contain leaked secrets)
+# ------------------------------------------------------------------------------
+*.bak
+*.backup
+*.old
+*.orig
+*~
+
+# ------------------------------------------------------------------------------
+# Developer Documents and Notes
+# ------------------------------------------------------------------------------
 /docs/
+/gitignore*
