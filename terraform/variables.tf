@@ -48,13 +48,19 @@ variable "auth_secret" {
 # API Keys - Google Services
 # ------------------------------------------------------------------------------
 variable "google_maps_api_key" {
-  description = "Google Maps API key for location services"
+  description = "Google Maps API key for server-side location services (geocoding). Stored in Secret Manager."
+  type        = string
+  sensitive   = true
+}
+
+variable "google_maps_api_key_client" {
+  description = "Google Maps API key for client-side use (browser). Should have HTTP referrer restrictions configured in GCP Console to limit usage to your domain."
   type        = string
   sensitive   = true
 }
 
 variable "google_ai_api_key" {
-  description = "Google AI (Gemini) API key for AI features"
+  description = "Google AI (Gemini) API key for AI features. Stored in Secret Manager."
   type        = string
   sensitive   = true
 }
